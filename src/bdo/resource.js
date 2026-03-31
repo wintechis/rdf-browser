@@ -81,12 +81,21 @@ class URI extends Resource {
         const html = document.createElement("span");
         const link = document.createElement("a");
         let uriValue = this.value;
-        if (baseURL !== "" && this.value === baseURL)
-            uriValue = "";
-        else if ((this.value.replace("https", "http").split("#"))[0] ===
-            (baseURL.replace("https", "http").split("#")[0]))
-            uriValue = this.value.substring(this.value.split("#")[0].length);
-        link.setAttribute("href", encodeURI(uriValue));
+        if (baseURL !== "") {
+            try {
+                const thisNorm = new URL(this.value).href;
+                const baseNorm = new URL(baseURL).href;
+                if (thisNorm === baseNorm)
+                    uriValue = "";
+                else if (new URL(this.value.split("#")[0]).href === new URL(baseURL.split("#")[0]).href)
+                    uriValue = this.value.substring(this.value.split("#")[0].length);
+            } catch(e) {
+                if ((this.value.replace("https", "http").split("#"))[0] ===
+                    (baseURL.replace("https", "http").split("#")[0]))
+                    uriValue = this.value.substring(this.value.split("#")[0].length);
+            }
+        }
+        link.setAttribute("href", uriValue);
         if (!forPrefix && this.prefix !== null) {
             html.setAttribute("class", "postfix");
             const prefixElement = document.createElement("span");
