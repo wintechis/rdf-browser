@@ -84,7 +84,7 @@ class URI extends Resource {
         if ((this.value.replace("https", "http").split("#"))[0] ===
             (baseURL.replace("https", "http").split("#")[0]))
             uriValue = this.value.substring(this.value.split("#")[0].length);
-        link.setAttribute("href", encodeURI(uriValue));
+        link.setAttribute("href", uriValue);
         if (!forPrefix && this.prefix !== null) {
             html.setAttribute("class", "postfix");
             const prefixElement = document.createElement("span");
