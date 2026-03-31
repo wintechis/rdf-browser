@@ -27,7 +27,7 @@ function serializePrefixes(store, html = null) {
         html.appendChild(prefixElement);
         html.appendChild(doubleColonElement);
         html.appendChild(document.createTextNode(" "));
-        html.appendChild(prefix.value.createHtml(true, true));
+        html.appendChild(prefix.value.createHtml(true, true, store.baseURL));
         html.appendChild(document.createTextNode(" ."));
         return html;
     }
