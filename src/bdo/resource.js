@@ -101,13 +101,13 @@ class URI extends Resource {
         } else {
             html.setAttribute("class", "uri");
             link.appendChild(document.createTextNode("<"));
-            link.appendChild(document.createTextNode(this.value));
+            link.appendChild(document.createTextNode(uriValue));
             link.appendChild(document.createTextNode(">"));
             html.appendChild(link);
             if (forPrefix)
                 return html;
             if (this.html === null)
-                this.representationLength = this.value.length + 2;
+                this.representationLength = uriValue.length + 2;
         }
         if (this.html === null)
             this.html = html;
