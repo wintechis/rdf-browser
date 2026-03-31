@@ -81,7 +81,9 @@ class URI extends Resource {
         const html = document.createElement("span");
         const link = document.createElement("a");
         let uriValue = this.value;
-        if ((this.value.replace("https", "http").split("#"))[0] ===
+        if (baseURL !== "" && this.value === baseURL)
+            uriValue = "";
+        else if ((this.value.replace("https", "http").split("#"))[0] ===
             (baseURL.replace("https", "http").split("#")[0]))
             uriValue = this.value.substring(this.value.split("#")[0].length);
         link.setAttribute("href", encodeURI(uriValue));
