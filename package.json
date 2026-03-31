@@ -5,7 +5,7 @@
   "license": "MIT",
   "scripts": {
     "build": "./script/build.sh",
-    "browserify": "esbuild src/main.js --bundle --outfile=build/main.js --global-name=app --platform=browser --alias:stream=stream-browserify --alias:buffer=buffer --alias:events=events --inject:src/process-inject.js",
+    "browserify": "esbuild src/main.js --bundle --minify --outfile=build/main.js --global-name=app --platform=browser --alias:stream=stream-browserify --alias:buffer=buffer --alias:events=events --inject:src/process-inject.js",
     "release": "./script/release.sh"
   },
   "repository": {
