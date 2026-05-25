@@ -169,7 +169,14 @@ async function rewriteResponse(cl, details, encoding, format, redirect) {
         {name: "Pragma", value: "no-cache"},
         {name: "Expires", value: "0"}
     ];
-    const url = redirect ? details.responseHeaders.find(h => h.name.toLowerCase() === "location").value : details.url;
+    let url = details.url;
+    if (redirect) {
+        const location = details.responseHeaders.find(h => h.name.toLowerCase() === "location");
+        // Location may be a relative reference (RFC 7231 §7.1.2); resolve it
+        // against the request URL, otherwise fetch() below would resolve it
+        // against the extension origin and never reach the origin server.
+        url = location ? new URL(location.value, details.url).href : details.url;
+    }
     if (options.contentScript) {
         const req = requests[details.tabId];
         req.url = url;
@@ -188,9 +195,20 @@ async function rewriteResponse(cl, details, encoding, format, redirect) {
     const filter = browser.webRequest.filterResponseData(details.requestId);
     let stream;
     if (redirect && url !== details.url) {
-        const response = await fetch(url);
-        if (!response.ok)
+        let response;
+        try {
+            response = await fetch(url);
+        } catch (e) {
+            // Closing the filter is essential: returning while it is still
+            // attached leaves the original response stream open and the tab
+            // hangs until it times out.
+            filter.close();
             return {};
+        }
+        if (!response.ok) {
+            filter.close();
+            return {};
+        }
         const body = await response.body;
         stream = body.getReader();
     } else
