@@ -2,6 +2,7 @@ const browser = window.browser;
 const interceptor = require("./interceptor");
 const serializer = require("./serializer");
 const parser = require("./parser");
+const auth = require("./auth");
 const ts = require("../bdo/triplestore");
 let triplestore, options;
 let reqUri, uri, baseURI, contentType;
@@ -9,9 +10,19 @@ let editMode = false, crawlerEnabled;
 
 async function init() {
     options = (await browser.storage.sync.get("options")).options;
+    const params = new URL(location.href).searchParams;
+    if (params.get("auth") === "1")
+        return initAuth(params);
+    return initNormal(params);
+}
+
+/**
+ * Normal rendering: fetch and display the RDF document referenced by the URL
+ * parameters (set when the response interceptor redirects here).
+ */
+async function initNormal(params) {
     const tabId = (await browser.tabs.getCurrent()).id;
     const requestDetails = await browser.runtime.sendMessage(["requestDetails", tabId.toString()]);
-    const params = new URL(location.href).searchParams;
     if (requestDetails === undefined) {
         reqUri = decodeURIComponent(params.get("url"));
         uri = reqUri;
@@ -20,8 +31,212 @@ async function init() {
         uri = decodeURIComponent(params.get("url"));
     }
     crawlerEnabled = options.quickOptions.crawler;
-    await loadContent(decodeURIComponent(params.get("encoding")), decodeURIComponent(params.get("format")));
+    const encoding = params.has("encoding") ? decodeURIComponent(params.get("encoding")) : null;
+    const format = params.has("format") ? decodeURIComponent(params.get("format")) : null;
+    await loadContent(encoding, format);
     await crawl();
+}
+
+/**
+ * Auth mode: reached after a 401 on a protected Solid resource, and again as
+ * the OIDC redirect target. Restore/complete the Solid session; if logged in,
+ * render the resource (now via an authenticated fetch); otherwise show the
+ * login screen.
+ */
+async function initAuth(params) {
+    let target = params.has("url") ? decodeURIComponent(params.get("url")) : await auth.peekPendingResource();
+
+    // The IdP (via the background interceptor) reported an authorization error.
+    if (params.get("error")) {
+        renderLoginScreen(target, "The identity provider returned an error: " + params.get("error") +
+            (params.get("error_description") ? " - " + params.get("error_description") : ""));
+        return;
+    }
+
+    // We were redirected back with an authorization code: complete the exchange.
+    const completing = params.get("code") && params.get("state");
+    if (completing)
+        showAuthLoading("Completing login…");
+    const session = await auth.restore();
+    if (session.info.isLoggedIn) {
+        if (!target)
+            target = await auth.takePendingResource();
+        else
+            await auth.takePendingResource();
+        if (!target) {
+            document.getElementById("title").innerText = "RDF Browser";
+            document.getElementById("status").innerText = "logged in";
+            return;
+        }
+        reqUri = target;
+        uri = target;
+        crawlerEnabled = options.quickOptions.crawler;
+        showAuthLoading("Loading resource…");
+        await loadContent(null, null);
+        await crawl();
+    } else {
+        renderLoginScreen(target, completing ? "Login did not complete. Please try again." : null);
+    }
+}
+
+/**
+ * Show a spinner with a message in the header status area while the
+ * authenticated resource is being fetched after login. Leaves #main (and its
+ * #prefixes / #triples targets) intact so loadContent can render into them;
+ * loadContent overwrites the status text once it reaches serialization.
+ */
+function showAuthLoading(message) {
+    ensureSpinnerStyle();
+    const status = document.getElementById("status");
+    while (status.firstChild)
+        status.firstChild.remove();
+    const spinner = document.createElement("span");
+    spinner.setAttribute("class", "solid-spinner");
+    const text = document.createElement("span");
+    text.setAttribute("style", "margin-left: .5em;");
+    text.innerText = message;
+    status.appendChild(spinner);
+    status.appendChild(text);
+}
+
+/**
+ * Inject the spinner keyframes once (the template stylesheet has none).
+ */
+function ensureSpinnerStyle() {
+    if (document.getElementById("#solid-spin-style"))
+        return;
+    const spinStyle = document.createElement("style");
+    spinStyle.setAttribute("id", "#solid-spin-style");
+    spinStyle.appendChild(document.createTextNode(
+        "@keyframes solid-spin{to{transform:rotate(360deg)}}" +
+        ".solid-spinner{display:inline-block;width:1em;height:1em;vertical-align:-0.15em;" +
+        "border:2px solid currentColor;border-right-color:transparent;border-radius:50%;" +
+        "animation:solid-spin 0.7s linear infinite;}"));
+    document.head.appendChild(spinStyle);
+}
+
+/**
+ * Render a Solid login prompt (issuer pre-filled, editable) for a protected
+ * resource. On submit, the redirect-based login flow is started.
+ * @param target The protected resource URL to render after login
+ * @param errorMessage Optional message to show (e.g. a prior failed attempt)
+ */
+function renderLoginScreen(target, errorMessage) {
+    document.getElementById("title").innerText = "Solid login required";
+    const main = document.getElementById("main");
+    while (main.firstChild)
+        main.firstChild.remove();
+    main.removeAttribute("style");
+
+    ensureSpinnerStyle();
+
+    const container = document.createElement("div");
+    container.setAttribute("style", "padding: 2em; max-width: 44em; font-family: sans-serif; line-height: 1.4;");
+
+    const heading = document.createElement("h2");
+    heading.appendChild(document.createTextNode("Authentication required"));
+    container.appendChild(heading);
+
+    const intro = document.createElement("p");
+    intro.appendChild(document.createTextNode("The resource "));
+    const code = document.createElement("code");
+    code.appendChild(document.createTextNode(target || "(unknown)"));
+    intro.appendChild(code);
+    intro.appendChild(document.createTextNode(" requires a Solid login. Enter your Solid identity provider and log in."));
+    container.appendChild(intro);
+
+    const label = document.createElement("label");
+    label.appendChild(document.createTextNode("Identity provider: "));
+    const input = document.createElement("input");
+    input.setAttribute("type", "text");
+    input.setAttribute("value", "https://solidcommunity.net");
+    input.setAttribute("style", "width: 24em; margin-right: .5em;");
+    label.appendChild(input);
+    container.appendChild(label);
+
+    const button = document.createElement("button");
+    button.appendChild(document.createTextNode("Log in"));
+    container.appendChild(button);
+
+    // Inline progress indicator shown while the login flow is running.
+    const progress = document.createElement("p");
+    progress.setAttribute("style", "margin-top: 1em;");
+    progress.setAttribute("hidden", "hidden");
+    const spinner = document.createElement("span");
+    spinner.setAttribute("class", "solid-spinner");
+    const progressText = document.createElement("span");
+    progressText.setAttribute("style", "margin-left: .6em;");
+    progress.appendChild(spinner);
+    progress.appendChild(progressText);
+    container.appendChild(progress);
+
+    const error = document.createElement("p");
+    error.setAttribute("style", "color: darkred;");
+    container.appendChild(error);
+
+    function showProgress(message) {
+        progressText.innerText = message;
+        progress.removeAttribute("hidden");
+        document.getElementById("status").innerText = message;
+    }
+
+    function hideProgress(statusMessage) {
+        progress.setAttribute("hidden", "hidden");
+        document.getElementById("status").innerText = statusMessage;
+    }
+
+    async function submit() {
+        button.setAttribute("disabled", "disabled");
+        input.setAttribute("disabled", "disabled");
+        error.innerText = "";
+        showProgress("Redirecting to identity provider…");
+        try {
+            // startLogin navigates this tab to the IdP and does not return; the
+            // spinner stays up until the page unloads. Control resumes on the
+            // post-redirect page load (initAuth → "Completing login…").
+            await auth.startLogin(input.value.trim(), target);
+        } catch (e) {
+            error.innerText = "Login failed: " + (e && e.message ? e.message : e);
+            button.removeAttribute("disabled");
+            input.removeAttribute("disabled");
+            hideProgress("login required");
+        }
+    }
+
+    button.addEventListener("click", submit);
+    input.addEventListener("keypress", event => {
+        if (event.key === "Enter")
+            submit();
+    });
+
+    if (errorMessage)
+        error.innerText = errorMessage;
+
+    main.appendChild(container);
+    document.getElementById("status").innerText = "login required";
+}
+
+/**
+ * Redirect to the shared error page for an HTTP error response, passing the
+ * status so the error page can offer a (re-)login button for 401/403.
+ * @param info {{httpError:number, statusText:string, url:string, detail:string}}
+ */
+function renderHttpError(info) {
+    const phrases = {
+        401: "Unauthorized — authentication is required to access this resource.",
+        403: "Forbidden — you are authenticated, but not authorized to access this resource.",
+        404: "Not Found — the resource does not exist.",
+        500: "Internal Server Error.",
+        502: "Bad Gateway.",
+        503: "Service Unavailable."
+    };
+    const reason = info.statusText || phrases[info.httpError] || "The resource could not be retrieved.";
+    const message = "HTTP " + info.httpError + " — " + reason;
+    const sendUrl = browser.runtime.getURL("build/view/error.html?url=")
+        + encodeURIComponent(info.url)
+        + "&httpStatus=" + encodeURIComponent(info.httpError)
+        + "&message=" + encodeURIComponent(message);
+    window.location.replace(sendUrl);
 }
 
 async function loadContent(encoding, format) {
@@ -43,6 +258,10 @@ async function loadContent(encoding, format) {
 
     try {
         triplestore = await interceptor.fetchDocument(uri, null, null, encoding, format);
+        if (triplestore && typeof triplestore === "object" && triplestore.httpError) {
+            renderHttpError(triplestore);
+            return;
+        }
         if (typeof triplestore === "string") {
             handleError(triplestore);
             return;
@@ -64,6 +283,7 @@ async function loadContent(encoding, format) {
                 document.getElementById("#navbar").setAttribute("value", baseURI);
         });
         document.getElementById("#editButton").removeAttribute("disabled");
+        await updateSolidSessionUI();
     } catch (e) {
         handleError(e);
     }
@@ -73,6 +293,35 @@ async function loadContent(encoding, format) {
             + encodeURIComponent(uri) + "&message=" + encodeURIComponent(e);
         window.location.replace(sendUrl);
     }
+}
+
+/**
+ * Show the WebID and a "Log out" button in the page header when a Solid session
+ * is active; hide both otherwise. Logging out clears the session and reloads
+ * the current resource (which will prompt for login again if it is protected).
+ */
+async function updateSolidSessionUI() {
+    const sessionElement = document.getElementById("#solidSession");
+    const logoutElement = document.getElementById("#solidLogout");
+    if (!sessionElement || !logoutElement)
+        return;
+    const session = await auth.getSession();
+    if (!session.info.isLoggedIn) {
+        sessionElement.setAttribute("hidden", "hidden");
+        logoutElement.setAttribute("hidden", "hidden");
+        return;
+    }
+    const webId = session.info.webId || "";
+    sessionElement.innerText = "🔓";
+    sessionElement.setAttribute("title", "Logged in as " + webId);
+    sessionElement.removeAttribute("hidden");
+    logoutElement.removeAttribute("hidden");
+    logoutElement.addEventListener("click", async () => {
+        logoutElement.setAttribute("disabled", "disabled");
+        await auth.logout();
+        // Reload the resource: a protected one will return 401 and re-prompt.
+        window.location.replace(reqUri || uri);
+    });
 }
 
 async function crawl() {

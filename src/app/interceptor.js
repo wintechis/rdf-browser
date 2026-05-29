@@ -2,6 +2,7 @@ const browser = window.browser;
 const parser = require("./parser");
 const serializer = require("./serializer");
 const utils = require('./utils');
+const auth = require('./auth');
 const styleScriptPath = "build/controller/style.js";
 const errorScriptPath = "build/controller/error.js";
 const templatePath = "build/view/template.html";
@@ -121,6 +122,19 @@ async function modifyResponseHeader(details) {
         requests[details.tabId].redirect = redirect;
     if (!options.quickOptions.response || details.type !== "main_frame" || utils.onList(options, "blacklist", new URL(details.url)))
         return {};
+    // A protected Solid resource answers an unauthenticated navigation with
+    // 401 + a WWW-Authenticate challenge. Redirect to the template page in
+    // auth mode, where a Solid login can run in a page context (DPoP needs to
+    // sign each request, which the background StreamFilter cannot do). The
+    // challenge gate avoids hijacking ordinary 401s from non-Solid sites.
+    if (details.statusCode === 401) {
+        const wwwAuth = details.responseHeaders.find(h => h.name.toLowerCase() === "www-authenticate");
+        if (wwwAuth && /dpop|solid|bearer/i.test(wwwAuth.value))
+            return {
+                redirectUrl: browser.runtime.getURL(templatePath
+                    + "?url=" + encodeURIComponent(details.url) + "&auth=1")
+            };
+    }
     const cl = details.responseHeaders.find(h => h.name.toLowerCase() === "content-length");
     if (cl) {
         const length = parseInt(cl.value);
@@ -298,17 +312,35 @@ async function fetchDocument(url, store, baseTriplestore, encoding = null, forma
         let response;
         if (baseTriplestore !== null)
             response = await Promise.race([
-                fetch(request, {
+                auth.authFetch(request, {
                     credentials: "omit"
                 }),
                 new Promise(resolve => setTimeout(() => resolve("timeout"), 2500))
             ]);
         else
-            response = await fetch(request);
+            response = await auth.authFetch(request);
         if (baseTriplestore !== null && response === "timeout")
             return "timeout";
         if (baseTriplestore !== null && !response.ok)
             return response.status;
+        if (baseTriplestore === null && !response.ok) {
+            // The (possibly authenticated) main-document request returned an
+            // HTTP error. Rather than rendering the server's error graph (e.g.
+            // CSS's ForbiddenHttpError triples) as if it were the resource,
+            // surface a structured error so the page can show a clear message
+            // and, for 401, offer to (re-)authenticate.
+            let detail = "";
+            try {
+                detail = (await response.text()).slice(0, 1000);
+            } catch (ignored) {
+            }
+            return {
+                httpError: response.status,
+                statusText: response.statusText || "",
+                url: url,
+                detail: detail
+            };
+        }
         if (encoding === null)
             encoding = response.headers.get("Encoding") || "utf-8";
         if (format === null)
@@ -385,6 +417,39 @@ async function processRDFPayload(stream, redirect, decoder, format, baseIRI) {
 }
 
 /**
+ * Intercept the Solid-OIDC redirect (a navigation to the identity API redirect
+ * URL, https://<id>.extensions.allizom.org/, which does not resolve) and bounce
+ * the tab to the template page in auth mode, carrying the OAuth response params.
+ * Running the token exchange on the template page (a moz-extension:// origin)
+ * lets the auth library complete its same-origin history cleanup without the
+ * cross-origin SecurityError that a real redirect-origin page would cause.
+ * @param details The details of the intercepted request
+ * @returns {{redirectUrl: string}|{}} A redirect to the template page, or {}
+ */
+function interceptAuthRedirect(details) {
+    const url = new URL(details.url);
+    const code = url.searchParams.get("code");
+    const state = url.searchParams.get("state");
+    const error = url.searchParams.get("error");
+    if (!code && !error)
+        return {};
+    let target = browser.runtime.getURL(templatePath) + "?auth=1";
+    if (code) {
+        target += "&code=" + encodeURIComponent(code)
+            + "&state=" + encodeURIComponent(state || "");
+        const iss = url.searchParams.get("iss");
+        if (iss)
+            target += "&iss=" + encodeURIComponent(iss);
+    } else {
+        target += "&error=" + encodeURIComponent(error);
+        const desc = url.searchParams.get("error_description");
+        if (desc)
+            target += "&error_description=" + encodeURIComponent(desc);
+    }
+    return {redirectUrl: target};
+}
+
+/**
  * Add the listeners for modifying HTTP request and response headers and for showing the page action button
  */
 function addListeners() {
@@ -395,6 +460,16 @@ function addListeners() {
         options = res;
         browser.webRequest.onBeforeSendHeaders.addListener(modifyRequestHeader, filter, ["blocking", "requestHeaders"]);
         browser.webRequest.onHeadersReceived.addListener(modifyResponseHeader, filter, ["blocking", "responseHeaders"]);
+        try {
+            const redirectBase = browser.identity.getRedirectURL();
+            browser.webRequest.onBeforeRequest.addListener(
+                interceptAuthRedirect,
+                {urls: [redirectBase + "*"], types: ["main_frame"]},
+                ["blocking"]
+            );
+        } catch (e) {
+            console.warn("Could not register Solid auth redirect interceptor:", e);
+        }
         browser.webNavigation.onCommitted.addListener(details => {
             if (options.quickOptions.pageAction)
                 browser.pageAction.show(details.tabId);

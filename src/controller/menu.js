@@ -21,6 +21,35 @@ async function init() {
     setCheckboxes();
     document.getElementById("switch").addEventListener("click", () => switchMode());
     document.getElementById("settings").addEventListener("click", () => openSettings());
+    await initSolid();
+}
+
+async function initSolid() {
+    const {solidWebId} = await browser.storage.local.get("solidWebId");
+    const statusElement = document.getElementById("solidStatus");
+    const logoutElement = document.getElementById("solidLogout");
+    if (solidWebId) {
+        statusElement.innerText = "Solid: " + solidWebId;
+        logoutElement.removeAttribute("hidden");
+        logoutElement.addEventListener("click", () => solidLogout());
+    } else {
+        statusElement.innerText = "Solid: not logged in";
+        logoutElement.setAttribute("hidden", "hidden");
+    }
+}
+
+function solidLogout() {
+    // The library state lives in the shared moz-extension localStorage; removing
+    // it prevents future session restores. (Access tokens are held in memory by
+    // already-open authenticated pages and expire with them.)
+    try {
+        for (const key of Object.keys(localStorage)) {
+            if (key.toLowerCase().includes("solid") || key.toLowerCase().includes("oidc"))
+                localStorage.removeItem(key);
+        }
+    } catch (ignored) {
+    }
+    browser.storage.local.remove(["solidWebId", "solidPendingResource"]).then(() => window.close());
 }
 
 function setCheckboxes() {

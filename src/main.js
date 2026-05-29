@@ -360,6 +360,18 @@ async function evaluateConformance(serverURI) {
 if (document.body.id === "template") {
     document.body.onloaddone = content.init().then();
 } else {
+    // Session-only Solid login: clear any persisted auth state on background
+    // start-up (once per browser session, since this is a persistent background
+    // page) so a browser restart effectively logs the user out. localStorage is
+    // shared across all moz-extension pages, so this also affects template pages.
+    try {
+        for (const key of Object.keys(localStorage)) {
+            if (key.toLowerCase().includes("solid") || key.toLowerCase().includes("oidc"))
+                localStorage.removeItem(key);
+        }
+    } catch (ignored) {
+    }
+    browser.storage.local.remove(["solidWebId", "solidPendingResource"]);
     ts.fetchDynamicContents().then(() => {
     });
     browser.storage.onChanged.addListener(() => {

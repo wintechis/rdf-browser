@@ -9,6 +9,45 @@ if (baseIRI === null) {
     document.getElementById("sources").remove();
 }
 
+// For authentication/authorization failures (HTTP 401/403), offer a login
+// button that (re-)starts the Solid login flow for this resource.
+const httpStatus = parseInt(new URLSearchParams(window.location.search).get('httpStatus'), 10);
+if (httpStatus === 401 || httpStatus === 403) {
+    // Show which Solid identity (WebID) the failed request was authenticated as,
+    // to help the user notice if they are logged in as the wrong identity.
+    browser.storage.local.get("solidWebId").then(({solidWebId}) => {
+        const identityElement = document.getElementById("identity");
+        if (solidWebId) {
+            identityElement.appendChild(document.createTextNode("You are authenticated as: "));
+            const webIdLink = document.createElement("a");
+            webIdLink.setAttribute("href", solidWebId);
+            webIdLink.appendChild(document.createTextNode(solidWebId));
+            identityElement.appendChild(webIdLink);
+        } else {
+            identityElement.appendChild(document.createTextNode("You are not currently authenticated (no Solid session)."));
+        }
+        identityElement.removeAttribute("hidden");
+    });
+    const loginButton = document.getElementById("login");
+    loginButton.innerText = (httpStatus === 403) ? "Log in as a different identity" : "Log in";
+    loginButton.removeAttribute("hidden");
+    loginButton.addEventListener("click", () => {
+        // Clear any stale Solid session so the auth page presents a fresh login
+        // (the library state lives in the shared moz-extension localStorage).
+        try {
+            for (const key of Object.keys(localStorage)) {
+                if (key.toLowerCase().includes("solid") || key.toLowerCase().includes("oidc"))
+                    localStorage.removeItem(key);
+            }
+        } catch (ignored) {
+        }
+        browser.storage.local.remove(["solidWebId", "solidPendingResource"]).finally(() => {
+            window.location.replace(browser.runtime.getURL("build/view/template.html?auth=1")
+                + "&url=" + encodeURIComponent(baseIRI));
+        });
+    });
+}
+
 function handleRefresh() {
     window.location.href = baseIRI;
 }
