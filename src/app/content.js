@@ -64,8 +64,13 @@ async function initAuth(params) {
         else
             await auth.takePendingResource();
         if (!target) {
-            document.getElementById("title").innerText = "RDF Browser";
-            document.getElementById("status").innerText = "logged in";
+            // Logged in, but the resource URL did not survive the login
+            // round-trip (e.g. the background page restarted mid-login and
+            // wiped the pending resource). Rather than a silent dead end, wire
+            // the navbar so the user can enter the resource URL to open it
+            // (they are already logged in, so no further login is needed).
+            console.warn("Solid login completed but no pending resource URL was found.");
+            renderRecovery();
             return;
         }
         reqUri = target;
@@ -113,6 +118,39 @@ function ensureSpinnerStyle() {
         "border:2px solid currentColor;border-right-color:transparent;border-radius:50%;" +
         "animation:solid-spin 0.7s linear infinite;}"));
     document.head.appendChild(spinStyle);
+}
+
+/**
+ * Shown when login succeeded but the resource URL to render was lost across the
+ * login round-trip. The user is logged in, so we just need a target: wire the
+ * header navbar so they can enter the resource URL and open it directly.
+ */
+function renderRecovery() {
+    document.getElementById("title").innerText = "RDF Browser";
+    const navbar = document.getElementById("#navbar");
+    const navButton = document.getElementById("#navButton");
+    navbar.addEventListener("focusin", event => event.target.select());
+    navbar.addEventListener("keypress", event => {
+        if (event.key === "Enter")
+            navigate();
+    });
+    navButton.addEventListener("click", navigate);
+    const main = document.getElementById("main");
+    while (main.firstChild)
+        main.firstChild.remove();
+    main.removeAttribute("style");
+    const container = document.createElement("div");
+    container.setAttribute("style", "padding: 2em; max-width: 44em; font-family: sans-serif; line-height: 1.4;");
+    const heading = document.createElement("h2");
+    heading.appendChild(document.createTextNode("Logged in"));
+    container.appendChild(heading);
+    const intro = document.createElement("p");
+    intro.appendChild(document.createTextNode("You are logged in, but the link to the original resource was lost. " +
+        "Enter the resource URL in the address bar above and press Enter to open it."));
+    container.appendChild(intro);
+    main.appendChild(container);
+    document.getElementById("status").innerText = "logged in";
+    navbar.focus();
 }
 
 /**

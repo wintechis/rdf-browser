@@ -371,7 +371,11 @@ if (document.body.id === "template") {
         }
     } catch (ignored) {
     }
-    browser.storage.local.remove(["solidWebId", "solidPendingResource"]);
+    // Clear the session marker, but NOT solidPendingResource: that holds the
+    // resource URL to render after login, and must survive a background-page
+    // restart that can happen mid-login (while the user is at the IdP). Wiping
+    // it here would leave a logged-in session with no target → blank page.
+    browser.storage.local.remove("solidWebId");
     ts.fetchDynamicContents().then(() => {
     });
     browser.storage.onChanged.addListener(() => {
