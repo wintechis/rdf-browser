@@ -44,7 +44,8 @@ async function initNormal(params) {
  * login screen.
  */
 async function initAuth(params) {
-    let target = params.has("url") ? decodeURIComponent(params.get("url")) : await auth.peekPendingResource();
+    const pendingPeek = await auth.peekPendingResource();
+    let target = params.has("url") ? decodeURIComponent(params.get("url")) : pendingPeek;
 
     // The IdP (via the background interceptor) reported an authorization error.
     if (params.get("error")) {
@@ -57,24 +58,42 @@ async function initAuth(params) {
     const completing = params.get("code") && params.get("state");
     if (completing)
         showAuthLoading("Completing login…");
+    // Persist the target BEFORE restore(): restoring the session can silently
+    // redirect to the IdP, and that redirect does not carry our ?url=. By
+    // storing the resource now, the post-redirect return recovers THIS resource
+    // (from pending) instead of falling back to a stale one.
+    if (target)
+        await auth.setPendingResource(target);
     const session = await auth.restore();
     if (session.info.isLoggedIn) {
+        // Use the pending resource as the target, but do NOT consume it here:
+        // the OIDC return can load initAuth more than once (the auth library
+        // cleans the URL, which can re-enter this handler), and a single-use
+        // take() would strand the second run on the recovery screen. The key
+        // is harmless to leave set — the 401 path renders from the ?url= param,
+        // and startLogin overwrites it on the next login.
         if (!target)
-            target = await auth.takePendingResource();
-        else
-            await auth.takePendingResource();
+            target = pendingPeek;
         if (!target) {
             // Logged in, but the resource URL did not survive the login
-            // round-trip (e.g. the background page restarted mid-login and
-            // wiped the pending resource). Rather than a silent dead end, wire
-            // the navbar so the user can enter the resource URL to open it
-            // (they are already logged in, so no further login is needed).
-            console.warn("Solid login completed but no pending resource URL was found.");
+            // round-trip. Rather than a silent dead end, wire the navbar so the
+            // user can enter the resource URL to open it (they are already
+            // logged in, so no further login is needed).
             renderRecovery();
             return;
         }
         reqUri = target;
         uri = target;
+        // Replace the address with a clean ?url= form, dropping the consumed
+        // OIDC params (code/state/iss). Otherwise a reload or same-page
+        // navigation re-enters this completion path with a now-stale code,
+        // which fails — and with the pending resource already consumed, would
+        // dead-end on the recovery screen. With ?url= present, a reload simply
+        // re-renders the resource via an authenticated fetch.
+        try {
+            history.replaceState(null, "", location.pathname + "?auth=1&url=" + encodeURIComponent(target));
+        } catch (ignored) {
+        }
         crawlerEnabled = options.quickOptions.crawler;
         showAuthLoading("Loading resource…");
         await loadContent(null, null);
@@ -260,6 +279,8 @@ function renderLoginScreen(target, errorMessage) {
  * @param info {{httpError:number, statusText:string, url:string, detail:string}}
  */
 function renderHttpError(info) {
+    // Log the full error context so the fetched URL / server status / response
+    // body are visible in the Browser Console even if the on-page URI is empty.
     const phrases = {
         401: "Unauthorized — authentication is required to access this resource.",
         403: "Forbidden — you are authenticated, but not authorized to access this resource.",

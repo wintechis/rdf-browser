@@ -180,6 +180,15 @@ async function authFetch(input, init) {
 }
 
 /**
+ * Persist the resource to render after auth. Set before restore(), because
+ * restoring a session can silently redirect to the IdP (which does not preserve
+ * our ?url=); on return we recover the resource from here.
+ */
+async function setPendingResource(url) {
+    await browser.storage.local.set({solidPendingResource: url || ""});
+}
+
+/**
  * Return the resource URL saved before the login redirect and clear it.
  */
 async function takePendingResource() {
@@ -214,6 +223,7 @@ module.exports = {
     restore,
     startLogin,
     authFetch,
+    setPendingResource,
     takePendingResource,
     peekPendingResource,
     logout
