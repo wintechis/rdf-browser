@@ -538,10 +538,6 @@ function addListeners() {
         } catch (e) {
             console.warn("Could not register Solid auth redirect interceptor:", e);
         }
-        browser.webNavigation.onCommitted.addListener(details => {
-            if (options.quickOptions.pageAction)
-                browser.pageAction.show(details.tabId);
-        });
     });
 }
 

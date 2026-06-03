@@ -40,6 +40,10 @@
 <body>
 <div class="title">Quick Actions</div>
 <div class="menu">
+    <div class="option" id="siteToggleOption" hidden="hidden">
+        <div id="siteHost" style="font-size: small; word-break: break-all; margin-bottom: 4px;"></div>
+        <button id="siteToggle"></button>
+    </div>
     <div class="option"><label>
         <input id="header" type="checkbox">
         Modify HTTP accept header
@@ -47,10 +51,6 @@
     <div class="option"><label>
         <input id="response" type="checkbox">
         Parse RDF documents as HTML
-    </label></div>
-    <div class="option"><label>
-        <input id="pageAction" type="checkbox">
-        Show page actions button
     </label></div>
     <div class="option">
         <button id="settings">Go to settings</button>

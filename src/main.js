@@ -138,8 +138,7 @@ const defaultOptions = {
     whitelist: "",
     quickOptions: {
         header: true,
-        response: true,
-        pageAction: true
+        response: true
     },
     acceptLanguage: "en;q=0.9, de;q=0.8, *;q=0.5",
     evaluationURI: "http://localhost:3000"

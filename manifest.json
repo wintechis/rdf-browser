@@ -25,14 +25,6 @@
   "options_ui": {
     "page": "build/view/options.html"
   },
-  "page_action": {
-    "browser_style": true,
-    "default_icon": {
-      "32": "build/img/icon32.svg"
-    },
-    "default_title": "RDF Browser",
-    "default_popup": "build/view/popup.html"
-  },
   "browser_action": {
     "browser_style": true,
     "default_icon": {
@@ -47,7 +39,6 @@
     "webRequestBlocking",
     "<all_urls>",
     "tabs",
-    "webNavigation",
     "identity"
   ],
   "web_accessible_resources": [
