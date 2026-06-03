@@ -18,7 +18,7 @@ function checkListMatch(input, list, url, req = false) {
     let hostWildcard = false, pathWildcard = false;
     if (input.length <= 1)
         return false;
-    if (hostArr.length >= 1 && hostArr[1].startsWith("*.")) {
+    if (hostArr.length >= 2 && hostArr[1].startsWith("*.")) {
         urlString = hostArr[0] + "://" + hostArr[1].substring(2);
         hostWildcard = true;
     } else

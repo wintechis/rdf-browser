@@ -264,10 +264,10 @@ function compareValues(a, b) {
         if (aString === bString) {
             const aInt = parseInt(a.substring(aString.length));
             const bInt = parseInt(b.substring(bString.length));
-            return aInt < bInt ? -1 : (aInt > bInt ? -1 : 0);
+            return aInt < bInt ? -1 : (aInt > bInt ? 1 : 0);
         }
     }
     return a.localeCompare(b);
 }
 
-module.exports = {Resource, URI, BlankNode, Literal, compareValues};
+module.exports = {Resource, URI, BlankNode, Literal, compareValues, relativeReference};

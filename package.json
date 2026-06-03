@@ -4,6 +4,7 @@
   "description": "A Firefox Add-on that requests RDF files and renders RDF files as Turtle documents with clickable links",
   "license": "MIT",
   "scripts": {
+    "test": "node --test",
     "build": "./script/build.sh",
     "browserify": "esbuild src/main.js --bundle --minify --outfile=build/main.js --global-name=app --platform=browser --alias:stream=stream-browserify --alias:buffer=buffer --alias:events=events --alias:util=util --alias:assert=assert --inject:src/process-inject.js",
     "release": "./script/release.sh"
