@@ -18,7 +18,6 @@ const defaultOptions = {
     ttlext: false,
     ntext: false,
     nqext: false,
-    contentScript: false,
     maxsize: 10485760,
     allStyleTemplate: {
         none: {
@@ -140,7 +139,6 @@ const defaultOptions = {
     quickOptions: {
         header: true,
         response: true,
-        crawler: true,
         pageAction: true
     },
     acceptLanguage: "en;q=0.9, de;q=0.8, *;q=0.5",

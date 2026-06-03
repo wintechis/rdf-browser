@@ -314,23 +314,6 @@ async function rewriteResponse(cl, details, encoding, format, redirect, prefetch
         // against the extension origin and never reach the origin server.
         url = location ? new URL(location.value, details.url).href : details.url;
     }
-    // Authenticated rendering always runs in the background (the session lives
-    // there); the content-script template redirect can't reach it.
-    if (options.contentScript && !prefetched) {
-        const req = requests[details.tabId];
-        req.url = url;
-        req.encoding = encoding;
-        req.format = format;
-        req.crawl = options.quickOptions.crawler;
-        return {
-            responseHeaders: responseHeaders,
-            redirectUrl: browser.runtime.getURL(templatePath
-                + "?url=" + encodeURIComponent(req.url)
-                + "&encoding=" + encodeURIComponent(encoding)
-                + "&format=" + encodeURIComponent(format)
-            )
-        };
-    }
     const filter = browser.webRequest.filterResponseData(details.requestId);
     let stream;
     // We read from a getReader() (rather than the in-flight filter) when the
@@ -428,80 +411,6 @@ function getNewAcceptHeader(oldHeader, considerOptions = true, uri = "") {
 }
 
 /**
- * Fetch an RDF document as response to a content script request and return the triplestore
- * @param url The URI of the document to fetch
- * @param store The metaTriplestore
- * @param baseTriplestore The triplestore of the base document (if any)
- * @param encoding The encoding of the document to fetch
- * @param format The format of the document to fetch
- */
-async function fetchDocument(url, store, baseTriplestore, encoding = null, format = null) {
-    const accept = getNewAcceptHeader(acceptHeader, false);
-    const request = new Request(url, {
-        headers: new Headers({
-            'Accept': accept
-        })
-    });
-    try {
-        let response;
-        if (baseTriplestore !== null)
-            response = await Promise.race([
-                auth.authFetch(request, {
-                    credentials: "omit"
-                }),
-                new Promise(resolve => setTimeout(() => resolve("timeout"), 2500))
-            ]);
-        else
-            response = await auth.authFetch(request);
-        if (baseTriplestore !== null && response === "timeout")
-            return "timeout";
-        if (baseTriplestore !== null && !response.ok)
-            return response.status;
-        if (baseTriplestore === null && !response.ok) {
-            // The (possibly authenticated) main-document request returned an
-            // HTTP error. Rather than rendering the server's error graph (e.g.
-            // CSS's ForbiddenHttpError triples) as if it were the resource,
-            // surface a structured error so the page can show a clear message
-            // and, for 401, offer to (re-)authenticate.
-            let detail = "";
-            try {
-                detail = (await response.text()).slice(0, 1000);
-            } catch (ignored) {
-            }
-            return {
-                httpError: response.status,
-                statusText: response.statusText || "",
-                url: url,
-                detail: detail
-            };
-        }
-        if (encoding === null)
-            encoding = response.headers.get("Encoding") || "utf-8";
-        if (format === null)
-            format = (response.headers.get("Content-type").split(";"))[0];
-        if (baseTriplestore !== null && !getFormats(false).includes(format))
-            return format;
-        if (baseTriplestore === null) {
-            const server = response.headers.get("Server") || "unknown";
-            document.getElementById("#server").appendChild(document.createTextNode(server));
-            document.getElementById("#ctype").appendChild(document.createTextNode(format));
-            const contentLength = response.headers.get("Content-Length") || "unknown";
-            document.getElementById("#clen").appendChild(document.createTextNode(contentLength));
-        }
-        response = await response.body;
-        if (baseTriplestore === null)
-            return await parser.obtainTriplestore(response.getReader(), false, new TextDecoder(encoding), format, true, url);
-        else
-            return await parser.obtainDescriptions(response.getReader(), new TextDecoder(encoding), format, url, store, baseTriplestore);
-    } catch (ignored) {
-        if (baseTriplestore !== null)
-            return "error";
-        else
-            return ignored.message;
-    }
-}
-
-/**
  * Parse the RDF payload and render it as HTML document using the serializer
  * @param stream The response stream
  * @param redirect Flag whether the response stream is result of fetch() or filterResponseData()
@@ -536,8 +445,6 @@ async function processRDFPayload(stream, redirect, decoder, format, baseIRI) {
             document.getElementById("title").innerText = baseIRI;
         document.getElementById("content-script").remove();
         document.getElementById("script").removeAttribute("src");
-        document.getElementById("header").remove();
-        document.getElementById("aside").remove();
         document.getElementById("main").setAttribute("style",
             "position: static; height: 100%; margin: 0 auto;");
         const scriptElement = document.getElementById("script");
@@ -640,7 +547,6 @@ function addListeners() {
 
 module.exports = {
     addListeners,
-    fetchDocument,
     acceptHeader,
     getRequestDetails,
     setPerformanceEvaluation,
