@@ -1,4 +1,5 @@
 const browser = window.browser;
+const pagestyle = require("./pagestyle");
 
 // content.js runs only on the extension's template page, which is now used
 // solely for the Solid auth UI (login screen / "completing login" spinner).
@@ -45,9 +46,8 @@ async function initAuth(params) {
 }
 
 /**
- * Inject the minimal-flat stylesheet for the auth pages (login / completing /
- * signed-in) and the spinner keyframes. Scoped to body.rdfb-auth so it also
- * hides the Turtle-view chrome (header/aside) and lets #main flow normally.
+ * Inject the shared page styles plus the auth-specific rules (spinner, form
+ * controls) for the login / completing / signed-in screens.
  */
 function ensureAuthStyle() {
     if (document.getElementById("rdfb-auth-style"))
@@ -55,34 +55,20 @@ function ensureAuthStyle() {
     const style = document.createElement("style");
     style.setAttribute("id", "rdfb-auth-style");
     style.appendChild(document.createTextNode(
+        pagestyle.PAGE_CSS +
         "@keyframes solid-spin{to{transform:rotate(360deg)}}" +
         ".solid-spinner{display:inline-block;width:1em;height:1em;vertical-align:-0.15em;" +
         "border:2px solid currentColor;border-right-color:transparent;border-radius:50%;" +
         "animation:solid-spin .7s linear infinite;}" +
-        "body.rdfb-auth{margin:0;background:#fff;color:#1b1b1b;line-height:1.55;" +
-        "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;}" +
-        "body.rdfb-auth>header,body.rdfb-auth>aside{display:none!important;}" +
+        // The auth template still carries the Turtle-view <main> layout; reset it.
         "body.rdfb-auth>main{position:static!important;width:auto!important;height:auto!important;" +
         "margin:0!important;overflow:visible!important;}" +
-        // Set font/white-space explicitly: style.js applies the Turtle theme
-        // (monospace, nowrap) to <main>, which this content would otherwise
-        // inherit.
-        ".rdfb-wrap{max-width:40rem;margin:0 auto;padding:3rem 1.5rem;white-space:normal;" +
-        "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;}" +
-        ".rdfb-wrap h1{font-size:1.35rem;font-weight:600;margin:0 0 1rem;padding-bottom:.6rem;" +
-        "border-bottom:1px solid #e6e6e6;}" +
-        ".rdfb-wrap p{margin:1rem 0;}" +
-        ".rdfb-muted{color:#5c5c5c;}" +
         ".rdfb-wrap code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;" +
         "font-size:.95em;word-break:break-all;}" +
         ".rdfb-label{display:block;font-size:.8rem;color:#444;margin:1.5rem 0 .4rem;}" +
         ".rdfb-input{width:100%;box-sizing:border-box;padding:.6rem .7rem;font-size:1rem;" +
         "border:1px solid #ccc;border-radius:6px;background:#fff;color:inherit;}" +
         ".rdfb-input:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.15);}" +
-        ".rdfb-actions{display:flex;gap:.6rem;flex-wrap:wrap;margin-top:1.5rem;}" +
-        ".rdfb-btn{font:inherit;cursor:pointer;padding:.55rem 1.1rem;border-radius:6px;border:1px solid transparent;}" +
-        ".rdfb-btn-primary{background:#2563eb;color:#fff;}" +
-        ".rdfb-btn-primary:hover{background:#1d4ed8;}" +
         ".rdfb-btn-primary:disabled{background:#9db8ef;cursor:default;}" +
         ".rdfb-error{color:#b00020;white-space:pre-wrap;word-break:break-word;}"));
     document.head.appendChild(style);

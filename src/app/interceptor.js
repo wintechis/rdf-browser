@@ -3,39 +3,30 @@ const parser = require("./parser");
 const serializer = require("./serializer");
 const utils = require('./utils');
 const auth = require('./auth');
+const pagestyle = require('./pagestyle');
 const styleScriptPath = "build/controller/style.js";
-const errorScriptPath = "build/controller/error.js";
 const templatePath = "build/view/template.html";
 const filter = {
     urls: ["<all_urls>"]
 };
 const requests = {};
-let acceptHeader = "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8";
 let options;
-let conformanceEvaluation = false;
-let performanceEvaluation = false;
-let conformanceOffset = 1;
-let conformanceData = {};
 
-function getRequestDetails(tabId) {
-    return requests[tabId];
-}
-
-function getFormats(considerOptions = true, uri = "") {
+function getFormats(uri = "") {
     const formats = [];
-    if ((!considerOptions || options.json) && !uri.includes("://dbpedia.org"))
+    if (options.json && !uri.includes("://dbpedia.org"))
         formats.push("application/ld+json");
-    if (!considerOptions || options.n4)
+    if (options.n4)
         formats.push("application/n-quads");
-    if (!considerOptions || options.nt)
+    if (options.nt)
         formats.push("application/n-triples");
-    if (!considerOptions || options.xml)
+    if (options.xml)
         formats.push("application/rdf+xml");
-    if (!considerOptions || options.trig)
+    if (options.trig)
         formats.push("application/trig");
-    if (!considerOptions || options.ttl)
+    if (options.ttl)
         formats.push("text/turtle");
-    if (!considerOptions || options.n3)
+    if (options.n3)
         formats.push("text/n3");
     return formats;
 }
@@ -70,19 +61,6 @@ function getFormatFor(fileType) {
     }
 }
 
-function setConformanceEvaluation(value) {
-    conformanceEvaluation = value;
-    if (!value)
-        conformanceData = {};
-}
-
-function getConformanceData() {
-    return conformanceData;
-}
-
-function setPerformanceEvaluation(value) {
-    performanceEvaluation = value;
-}
 
 /**
  * Modify the accept header for all HTTP requests to include the content types specified in formats
@@ -102,8 +80,7 @@ function modifyRequestHeader(details) {
         return {};
     for (let headerField of details.requestHeaders) {
         if (headerField.name.toLowerCase() === "accept") {
-            acceptHeader = getNewAcceptHeader(headerField.value, true, details.url);
-            headerField.value = acceptHeader;
+            headerField.value = getNewAcceptHeader(headerField.value, details.url);
         } else if (headerField.name.toLowerCase() === "accept-language") {
             headerField.value = options.acceptLanguage
         }
@@ -154,16 +131,6 @@ async function modifyResponseHeader(details) {
     fileType = (fileType !== undefined && fileType.length >= 1) ? fileType[fileType.length - 1] : false;
     let encoding = contentType ? contentType.value.split("charset=") : false;
     encoding = (encoding && encoding.length >= 2) ? encoding[1] : false;
-    if (conformanceEvaluation) {
-        if (conformanceOffset === 1)
-            conformanceOffset -= details.tabId;
-        if (!conformanceData.hasOwnProperty((details.tabId + conformanceOffset).toString()))
-            conformanceData[details.tabId + conformanceOffset] = {
-                number: details.tabId + conformanceOffset,
-                uri: details.url,
-                turtle: null
-            };
-    }
     if (!format && !getFileTypes().includes(fileType) && !onWhitelist)
         return {};
     if (!format && !(format = getFormatFor(fileType))) {
@@ -265,25 +232,12 @@ function buildErrorPage(url, status, statusText, detail) {
     return "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\">"
         + "<title>RDF Browser — Error</title><style>"
         + ":root{color-scheme:light}"
-        + "body{margin:0;background:#fff;color:#1b1b1b;line-height:1.55;"
-        + "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}"
-        + ".wrap{max-width:40rem;margin:0 auto;padding:3rem 1.5rem}"
-        + "h1{font-size:1.35rem;font-weight:600;margin:0 0 1rem;padding-bottom:.6rem;border-bottom:1px solid #e6e6e6}"
-        + "p{margin:1rem 0}.muted{color:#5c5c5c}"
+        + pagestyle.PAGE_CSS
         + "a.rdfb-url{color:#2563eb;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;"
         + "font-size:.95em;word-break:break-all}"
-        + ".rdfb-detail{background:#f6f6f6;border:1px solid #ececec;border-radius:6px;padding:.8rem;overflow:auto;"
-        + "white-space:pre-wrap;word-break:break-word;"
-        + "font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.85rem}"
-        + ".rdfb-actions{display:flex;gap:.6rem;flex-wrap:wrap;margin-top:1.5rem}"
-        + ".rdfb-btn{font:inherit;cursor:pointer;text-decoration:none;display:inline-block;"
-        + "padding:.55rem 1.1rem;border-radius:6px;border:1px solid #ccc;background:#fff;color:#1b1b1b}"
-        + ".rdfb-btn:hover{background:#f4f4f4}"
-        + ".rdfb-btn-primary{background:#2563eb;color:#fff;border-color:transparent}"
-        + ".rdfb-btn-primary:hover{background:#1d4ed8}"
-        + "</style></head><body><div class=\"wrap\">"
+        + "</style></head><body><div class=\"rdfb-wrap\">"
         + "<h1>This resource couldn’t be displayed</h1>"
-        + "<p class=\"muted\">RDF Browser could not render <a class=\"rdfb-url\" href=\"" + esc(url) + "\">"
+        + "<p class=\"rdfb-muted\">RDF Browser could not render <a class=\"rdfb-url\" href=\"" + esc(url) + "\">"
         + esc(url) + "</a>.</p>"
         + "<p>" + esc(statusLine) + "</p>"
         + detailBlock
@@ -354,46 +308,28 @@ async function rewriteResponse(cl, details, encoding, format, redirect, prefetch
     // processRDFPayload reads via a .read() loop when given a getReader(), and
     // via filter on/ondata events otherwise; fromReader selects the right path.
     processRDFPayload(stream, fromReader, decoder, format, baseIRI).then(output => {
-        if (conformanceEvaluation) {
-            const html = new DOMParser().parseFromString(output, 'text/html');
-            conformanceData[details.tabId + conformanceOffset].turtle = html.body.textContent;
-        }
         filter.write(encoder.encode(output));
         filter.close();
     })
         .catch(e => {
-            handleError(e).then(document => {
-                filter.write(encoder.encode(document.toString()));
-                filter.close();
-            });
+            // Malformed RDF (or an unsupported encoding): show the shared error
+            // page instead of a blank document.
+            const html = buildErrorPage(baseIRI, 0, "Could not parse the RDF document", (e && e.message) ? e.message : String(e));
+            filter.write(encoder.encode(html));
+            filter.close();
         });
     return {
         responseHeaders: responseHeaders
     };
-
-    async function handleError(error) {
-        const file = await fetch("build/view/error.html");
-        let text = await file.text();
-        text = await utils.injectScript(text, errorScriptPath);
-        const document = new DOMParser().parseFromString(text.toString(), "text/html");
-        document.title = baseIRI;
-        document.getElementById("script").removeAttribute("src");
-        const url = document.createTextNode(baseIRI);
-        document.getElementById("url").setAttribute("href", baseIRI);
-        document.getElementById("url").appendChild(url);
-        const message = document.createTextNode(error.toString());
-        document.getElementById("message").appendChild(message);
-        return new XMLSerializer().serializeToString(document);
-    }
 }
 
 /**
  * Return the modified accept header as a string
  * @returns {string} The modified accept header
  */
-function getNewAcceptHeader(oldHeader, considerOptions = true, uri = "") {
+function getNewAcceptHeader(oldHeader, uri = "") {
     let newHeader = "";
-    for (const f of getFormats(considerOptions, uri))
+    for (const f of getFormats(uri))
         newHeader += f + ";q=1,";
     for (let f of oldHeader.split(",")) {
         let q = 1.0;
@@ -420,7 +356,7 @@ function getNewAcceptHeader(oldHeader, considerOptions = true, uri = "") {
  * @returns The HTML payload as string (in background script mode only)
  */
 async function processRDFPayload(stream, redirect, decoder, format, baseIRI) {
-    const triplestore = await parser.obtainTriplestore(stream, redirect, decoder, format, false, baseIRI);
+    const triplestore = await parser.obtainTriplestore(stream, redirect, decoder, format, baseIRI);
     let template = await getTemplate();
     template = await utils.injectScript(template, styleScriptPath);
     return createDocument(template, triplestore);
@@ -439,10 +375,7 @@ async function processRDFPayload(stream, redirect, decoder, format, baseIRI) {
 
     function createDocument(html, store) {
         const document = new DOMParser().parseFromString(html, "text/html");
-        if (performanceEvaluation)
-            document.getElementById("title").innerText = triplestore.triples;
-        else
-            document.getElementById("title").innerText = baseIRI;
+        document.getElementById("title").innerText = baseIRI;
         document.getElementById("content-script").remove();
         document.getElementById("script").removeAttribute("src");
         document.getElementById("main").setAttribute("style",
@@ -542,10 +475,5 @@ function addListeners() {
 }
 
 module.exports = {
-    addListeners,
-    acceptHeader,
-    getRequestDetails,
-    setPerformanceEvaluation,
-    setConformanceEvaluation,
-    getConformanceData
+    addListeners
 }

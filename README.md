@@ -4,9 +4,9 @@
 RDF Browser is a Firefox Add-on that requests RDF files and renders RDF files as Turtle documents with clickable links.
 
 
-| Current version: | 1.2.3       |
+| Current version: | 2.0.0       |
 |------------------|-------------|
-| Release date:    | Oct 5, 2022 |
+| Release date:    | Jun 3, 2026 |
 
 The Add-on is released and maintained by the [Chair of Technical Information Systems](https://www.ti.rw.fau.de) at [Friedrich-Alexander-University Erlangen-Nürnberg](https://www.fau.de).
 
@@ -48,6 +48,14 @@ $ npm run build
 - To see the raw format of any rendered RDF file, click *Ctrl + U*.
 
 ## Changelog
+
+### Version 2.0.0
+- Added Solid-OIDC authentication: protected pod resources prompt a login and are then rendered via an authenticated, DPoP-signed request. The session is held in the background page so navigating between protected resources does not re-authenticate.
+- Protected resources render read-only in place at their real URL, like public resources.
+- Redesigned login and error pages (clean, light, minimal).
+- Added a per-site on/off switch in the toolbar popup.
+- **Breaking:** removed Developer Mode — the in-page editor (HTTP CRUD), the crawler, and the Linked Data Principles conformance check — and the page-action button.
+- Internal cleanup and reduced code duplication.
 
 ### Version 1.2.3
 - Fixed floating point numbers in HTTP accept header

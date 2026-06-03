@@ -12,24 +12,6 @@ function onList(options, list, url, req = false) {
     return false;
 }
 
-function getListStatus(options, list, url) {
-    list = options[list].split("\n");
-    for (const entry in list) {
-        let entryUrl = list[entry];
-        const active = !list[entry].startsWith('#');
-        if (!active)
-            entryUrl = entryUrl.substring(1).replace(/\s/g, '');
-        url = new URL(url);
-        if (checkListMatch(entryUrl, list, url))
-            return (
-                {
-                    url: entryUrl,
-                    active: active
-                });
-    }
-    return false;
-}
-
 function checkListMatch(input, list, url, req = false) {
     let entry, urlString;
     const hostArr = input.split("://");
@@ -93,4 +75,4 @@ function getOptions() {
     return new Promise(resolve => browser.storage.sync.get("options").then(result => resolve(result.options)));
 }
 
-module.exports = {onList, getListStatus, injectScript, getOptions};
+module.exports = {onList, injectScript, getOptions};

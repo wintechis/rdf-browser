@@ -97,14 +97,13 @@ class Triplestore {
         return s.item;
     }
 
-    finalize(contentScript = true) {
+    finalize() {
         addBasePrefix(this);
         for (const uri in this.uris)
             this.uris[uri].updatePrefix(this.prefixes);
         for (const literal in this.literals)
             this.literals[literal].updatePrefix(this.prefixes);
-        if (!contentScript)
-            removeUnusedPrefixes(this);
+        removeUnusedPrefixes(this);
         this.prefixes = this.prefixes.sort((a, b) => a.compareTo(b));
         this.subjects = this.subjects.sort((a, b) => a.compareTo(b));
         for (const s in this.subjects) {
@@ -285,14 +284,7 @@ function removeUnusedPrefixes(store) {
         store.prefixes.splice(toRemove[remove], 1);
 }
 
-async function getTriplestore(url, contentScript = true) {
-    if (contentScript) {
-        try {
-            await fetchDynamicContents();
-        } catch (e) {
-            console.warn("Could not fetch dynamic contents: " + e.message);
-        }
-    }
+async function getTriplestore(url) {
     return new Triplestore(url, commonPrefixes);
 }
 
