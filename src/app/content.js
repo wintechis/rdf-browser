@@ -2,7 +2,6 @@ const browser = window.browser;
 const interceptor = require("./interceptor");
 const serializer = require("./serializer");
 const parser = require("./parser");
-const auth = require("./auth");
 const ts = require("../bdo/triplestore");
 let triplestore, options;
 let reqUri, uri, baseURI, contentType;
@@ -11,7 +10,8 @@ let editMode = false, crawlerEnabled;
 async function init() {
     options = (await browser.storage.sync.get("options")).options;
     const params = new URL(location.href).searchParams;
-    if (params.get("auth") === "1")
+    const authParam = params.get("auth");
+    if (authParam === "1" || authParam === "complete" || authParam === "loggedin")
         return initAuth(params);
     return initNormal(params);
 }
@@ -38,69 +38,37 @@ async function initNormal(params) {
 }
 
 /**
- * Auth mode: reached after a 401 on a protected Solid resource, and again as
- * the OIDC redirect target. Restore/complete the Solid session; if logged in,
- * render the resource (now via an authenticated fetch); otherwise show the
- * login screen.
+ * Auth mode. The Solid session lives in the background page now, so this page
+ * is only the login UI:
+ *  - ?auth=complete : a spinner shown while the background completes the token
+ *    exchange and then navigates this tab to the requested resource.
+ *  - ?auth=1        : the login screen for a protected resource (the resource
+ *    is in ?url=). On submit, the background runs the login and navigates this
+ *    tab; once logged in, the resource renders in place at its real URL via the
+ *    background (no further visit to this page).
  */
 async function initAuth(params) {
-    const pendingPeek = await auth.peekPendingResource();
-    let target = params.has("url") ? decodeURIComponent(params.get("url")) : pendingPeek;
-
-    // The IdP (via the background interceptor) reported an authorization error.
-    if (params.get("error")) {
-        renderLoginScreen(target, "The identity provider returned an error: " + params.get("error") +
-            (params.get("error_description") ? " - " + params.get("error_description") : ""));
+    const authParam = params.get("auth");
+    if (authParam === "complete") {
+        showAuthLoading("Completing login…");
         return;
     }
-
-    // We were redirected back with an authorization code: complete the exchange.
-    const completing = params.get("code") && params.get("state");
-    if (completing)
-        showAuthLoading("Completing login…");
-    // Persist the target BEFORE restore(): restoring the session can silently
-    // redirect to the IdP, and that redirect does not carry our ?url=. By
-    // storing the resource now, the post-redirect return recovers THIS resource
-    // (from pending) instead of falling back to a stale one.
-    if (target)
-        await auth.setPendingResource(target);
-    const session = await auth.restore();
-    if (session.info.isLoggedIn) {
-        // Use the pending resource as the target, but do NOT consume it here:
-        // the OIDC return can load initAuth more than once (the auth library
-        // cleans the URL, which can re-enter this handler), and a single-use
-        // take() would strand the second run on the recovery screen. The key
-        // is harmless to leave set — the 401 path renders from the ?url= param,
-        // and startLogin overwrites it on the next login.
-        if (!target)
-            target = pendingPeek;
-        if (!target) {
-            // Logged in, but the resource URL did not survive the login
-            // round-trip. Rather than a silent dead end, wire the navbar so the
-            // user can enter the resource URL to open it (they are already
-            // logged in, so no further login is needed).
-            renderRecovery();
-            return;
-        }
-        reqUri = target;
-        uri = target;
-        // Replace the address with a clean ?url= form, dropping the consumed
-        // OIDC params (code/state/iss). Otherwise a reload or same-page
-        // navigation re-enters this completion path with a now-stale code,
-        // which fails — and with the pending resource already consumed, would
-        // dead-end on the recovery screen. With ?url= present, a reload simply
-        // re-renders the resource via an authenticated fetch.
-        try {
-            history.replaceState(null, "", location.pathname + "?auth=1&url=" + encodeURIComponent(target));
-        } catch (ignored) {
-        }
-        crawlerEnabled = options.quickOptions.crawler;
-        showAuthLoading("Loading resource…");
-        await loadContent(null, null);
-        await crawl();
-    } else {
-        renderLoginScreen(target, completing ? "Login did not complete. Please try again." : null);
+    if (authParam === "loggedin") {
+        // Logged in, but no resource to open (target was lost). Not an error.
+        document.getElementById("title").innerText = "RDF Browser";
+        document.getElementById("status").innerText = "logged in";
+        return;
     }
+    const target = params.has("url") ? decodeURIComponent(params.get("url")) : null;
+    if (params.get("error")) {
+        const desc = params.get("error_description");
+        const message = (params.get("error") === "login_failed")
+            ? (desc || "The login did not complete. Please try again.")
+            : ("The identity provider returned an error: " + params.get("error") + (desc ? " - " + desc : ""));
+        renderLoginScreen(target, message);
+        return;
+    }
+    renderLoginScreen(target, null);
 }
 
 /**
@@ -137,39 +105,6 @@ function ensureSpinnerStyle() {
         "border:2px solid currentColor;border-right-color:transparent;border-radius:50%;" +
         "animation:solid-spin 0.7s linear infinite;}"));
     document.head.appendChild(spinStyle);
-}
-
-/**
- * Shown when login succeeded but the resource URL to render was lost across the
- * login round-trip. The user is logged in, so we just need a target: wire the
- * header navbar so they can enter the resource URL and open it directly.
- */
-function renderRecovery() {
-    document.getElementById("title").innerText = "RDF Browser";
-    const navbar = document.getElementById("#navbar");
-    const navButton = document.getElementById("#navButton");
-    navbar.addEventListener("focusin", event => event.target.select());
-    navbar.addEventListener("keypress", event => {
-        if (event.key === "Enter")
-            navigate();
-    });
-    navButton.addEventListener("click", navigate);
-    const main = document.getElementById("main");
-    while (main.firstChild)
-        main.firstChild.remove();
-    main.removeAttribute("style");
-    const container = document.createElement("div");
-    container.setAttribute("style", "padding: 2em; max-width: 44em; font-family: sans-serif; line-height: 1.4;");
-    const heading = document.createElement("h2");
-    heading.appendChild(document.createTextNode("Logged in"));
-    container.appendChild(heading);
-    const intro = document.createElement("p");
-    intro.appendChild(document.createTextNode("You are logged in, but the link to the original resource was lost. " +
-        "Enter the resource URL in the address bar above and press Enter to open it."));
-    container.appendChild(intro);
-    main.appendChild(container);
-    document.getElementById("status").innerText = "logged in";
-    navbar.focus();
 }
 
 /**
@@ -247,13 +182,12 @@ function renderLoginScreen(target, errorMessage) {
         input.setAttribute("disabled", "disabled");
         error.innerText = "";
         showProgress("Redirecting to identity provider…");
-        try {
-            // startLogin navigates this tab to the IdP and does not return; the
-            // spinner stays up until the page unloads. Control resumes on the
-            // post-redirect page load (initAuth → "Completing login…").
-            await auth.startLogin(input.value.trim(), target);
-        } catch (e) {
-            error.innerText = "Login failed: " + (e && e.message ? e.message : e);
+        // The background owns the session: it runs the login and navigates THIS
+        // tab to the IdP (via sender.tab.id). The spinner stays up until the
+        // page unloads. A failure before navigation comes back as {ok:false}.
+        const result = await browser.runtime.sendMessage(["startLogin", input.value.trim(), target]);
+        if (result && result.ok === false) {
+            error.innerText = "Login failed: " + (result.error || "unknown error");
             button.removeAttribute("disabled");
             input.removeAttribute("disabled");
             hideProgress("login required");
@@ -364,20 +298,21 @@ async function updateSolidSessionUI() {
     const logoutElement = document.getElementById("#solidLogout");
     if (!sessionElement || !logoutElement)
         return;
-    const session = await auth.getSession();
-    if (!session.info.isLoggedIn) {
+    // The session lives in the background page; query it via a message.
+    const status = await browser.runtime.sendMessage(["sessionStatus"]);
+    if (!status || !status.isLoggedIn) {
         sessionElement.setAttribute("hidden", "hidden");
         logoutElement.setAttribute("hidden", "hidden");
         return;
     }
-    const webId = session.info.webId || "";
+    const webId = status.webId || "";
     sessionElement.innerText = "🔓";
     sessionElement.setAttribute("title", "Logged in as " + webId);
     sessionElement.removeAttribute("hidden");
     logoutElement.removeAttribute("hidden");
     logoutElement.addEventListener("click", async () => {
         logoutElement.setAttribute("disabled", "disabled");
-        await auth.logout();
+        await browser.runtime.sendMessage(["logout"]);
         // Reload the resource: a protected one will return 401 and re-prompt.
         window.location.replace(reqUri || uri);
     });

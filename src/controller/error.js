@@ -32,16 +32,9 @@ if (httpStatus === 401 || httpStatus === 403) {
     loginButton.innerText = (httpStatus === 403) ? "Log in as a different identity" : "Log in";
     loginButton.removeAttribute("hidden");
     loginButton.addEventListener("click", () => {
-        // Clear any stale Solid session so the auth page presents a fresh login
-        // (the library state lives in the shared moz-extension localStorage).
-        try {
-            for (const key of Object.keys(localStorage)) {
-                if (key.toLowerCase().includes("solid") || key.toLowerCase().includes("oidc"))
-                    localStorage.removeItem(key);
-            }
-        } catch (ignored) {
-        }
-        browser.storage.local.remove(["solidWebId", "solidPendingResource"]).finally(() => {
+        // Clear any stale Solid session (it lives in the background page), then
+        // present a fresh login screen for this resource.
+        browser.runtime.sendMessage(["logout"]).finally(() => {
             window.location.replace(browser.runtime.getURL("build/view/template.html?auth=1")
                 + "&url=" + encodeURIComponent(baseIRI));
         });

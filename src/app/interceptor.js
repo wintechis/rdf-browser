@@ -123,17 +123,23 @@ async function modifyResponseHeader(details) {
     if (!options.quickOptions.response || details.type !== "main_frame" || utils.onList(options, "blacklist", new URL(details.url)))
         return {};
     // A protected Solid resource answers an unauthenticated navigation with
-    // 401 + a WWW-Authenticate challenge. Redirect to the template page in
-    // auth mode, where a Solid login can run in a page context (DPoP needs to
-    // sign each request, which the background StreamFilter cannot do). The
-    // challenge gate avoids hijacking ordinary 401s from non-Solid sites.
+    // 401 + a WWW-Authenticate challenge. If the background already holds a
+    // Solid session, render the resource in place via an authenticated fetch
+    // (session.fetch — DPoP-signed in the background). Otherwise redirect to the
+    // template page to show a login screen. The challenge gate avoids hijacking
+    // ordinary 401s from non-Solid sites.
+    let authenticated = false;
     if (details.statusCode === 401) {
         const wwwAuth = details.responseHeaders.find(h => h.name.toLowerCase() === "www-authenticate");
-        if (wwwAuth && /dpop|solid|bearer/i.test(wwwAuth.value))
-            return {
-                redirectUrl: browser.runtime.getURL(templatePath
-                    + "?url=" + encodeURIComponent(details.url) + "&auth=1")
-            };
+        if (wwwAuth && /dpop|solid|bearer/i.test(wwwAuth.value)) {
+            const status = await auth.getStatus();
+            if (!status.isLoggedIn)
+                return {
+                    redirectUrl: browser.runtime.getURL(templatePath
+                        + "?url=" + encodeURIComponent(details.url) + "&auth=1")
+                };
+            authenticated = true;
+        }
     }
     const cl = details.responseHeaders.find(h => h.name.toLowerCase() === "content-length");
     if (cl) {
@@ -169,13 +175,71 @@ async function modifyResponseHeader(details) {
         console.warn("The HTTP response does not include encoding information. Encoding in utf-8 is assumed.");
         encoding = "utf-8";
     }
+    if (authenticated)
+        return await renderAuthenticatedResource(cl, details, encoding, format);
     return await rewriteResponse(cl, details, encoding, format, redirect);
 }
 
 /**
- * Rewrite the HTTP response (background script) or redirect to the html template (content script)
+ * Fetch a protected resource with the background Solid session and render it in
+ * place. The fetch happens BEFORE the StreamFilter is attached so that a
+ * non-2xx result (403/404/5xx) or a network error can be shown as a proper
+ * error page (a clean redirect), rather than a blank tab.
  */
-async function rewriteResponse(cl, details, encoding, format, redirect) {
+async function renderAuthenticatedResource(cl, details, encoding, format) {
+    let response;
+    try {
+        response = await auth.authFetch(details.url);
+    } catch (e) {
+        return {redirectUrl: errorPageUrl(details.url, 0, "Could not load the resource: " + ((e && e.message) || e), "")};
+    }
+    if (!response.ok) {
+        let detail = "";
+        try {
+            detail = (await response.text()).slice(0, 600);
+        } catch (ignored) {
+        }
+        return {redirectUrl: errorPageUrl(details.url, response.status, response.statusText, detail)};
+    }
+    // Prefer the real resource's own content-type now that we have it; the
+    // format/encoding guessed from the 401 challenge may not match the resource.
+    const contentType = response.headers.get("Content-Type") || "";
+    const resolvedFormat = getFormats().find(f => contentType.includes(f)) || format;
+    const charset = contentType.split("charset=")[1];
+    return await rewriteResponse(cl, details, charset || encoding, resolvedFormat, false, response);
+}
+
+/**
+ * Build a URL to the shared error page for an HTTP/network failure, carrying
+ * the resource URL and status so the error page can show the reason and offer
+ * a (re-)login for 401/403.
+ */
+function errorPageUrl(resourceUrl, status, statusText, detail) {
+    const phrases = {
+        401: "Unauthorized — authentication is required.",
+        403: "Forbidden — you are authenticated, but not authorized to access this resource.",
+        404: "Not Found — the resource does not exist.",
+        500: "Internal Server Error.",
+        502: "Bad Gateway.",
+        503: "Service Unavailable."
+    };
+    const reason = statusText || phrases[status] || "The resource could not be retrieved.";
+    let message = status ? ("HTTP " + status + " — " + reason) : reason;
+    if (detail)
+        message += "\n\n" + detail;
+    return browser.runtime.getURL("build/view/error.html?url=")
+        + encodeURIComponent(resourceUrl)
+        + "&httpStatus=" + encodeURIComponent(status || "")
+        + "&message=" + encodeURIComponent(message);
+}
+
+/**
+ * Rewrite the HTTP response (background script) or redirect to the html template (content script)
+ * @param prefetched An already-fetched Response whose body should be rendered
+ *   in place of the original response (used to render a protected resource from
+ *   an authenticated fetch, discarding the original 401 body). null otherwise.
+ */
+async function rewriteResponse(cl, details, encoding, format, redirect, prefetched = null) {
     const responseHeaders = [
         {name: "Content-Type", value: "text/html; charset=utf-8"},
         {name: "Cache-Control", value: "no-cache, no-store, must-revalidate"},
@@ -191,7 +255,9 @@ async function rewriteResponse(cl, details, encoding, format, redirect) {
         // against the extension origin and never reach the origin server.
         url = location ? new URL(location.value, details.url).href : details.url;
     }
-    if (options.contentScript) {
+    // Authenticated rendering always runs in the background (the session lives
+    // there); the content-script template redirect can't reach it.
+    if (options.contentScript && !prefetched) {
         const req = requests[details.tabId];
         req.url = url;
         req.encoding = encoding;
@@ -208,7 +274,14 @@ async function rewriteResponse(cl, details, encoding, format, redirect) {
     }
     const filter = browser.webRequest.filterResponseData(details.requestId);
     let stream;
-    if (redirect && url !== details.url) {
+    // We read from a getReader() (rather than the in-flight filter) when the
+    // body comes from a separate fetch: a cross-URL redirect, or an already
+    // fetched authenticated response (whose original 401 body we discard).
+    const fromReader = !!prefetched || (redirect && url !== details.url);
+    if (prefetched) {
+        const body = await prefetched.body;
+        stream = body.getReader();
+    } else if (redirect && url !== details.url) {
         let response;
         try {
             response = await fetch(url);
@@ -236,7 +309,9 @@ async function rewriteResponse(cl, details, encoding, format, redirect) {
     }
     const encoder = new TextEncoder();
     const baseIRI = url.toString();
-    processRDFPayload(stream, redirect, decoder, format, baseIRI).then(output => {
+    // processRDFPayload reads via a .read() loop when given a getReader(), and
+    // via filter on/ondata events otherwise; fromReader selects the right path.
+    processRDFPayload(stream, fromReader, decoder, format, baseIRI).then(output => {
         if (conformanceEvaluation) {
             const html = new DOMParser().parseFromString(output, 'text/html');
             conformanceData[details.tabId + conformanceOffset].turtle = html.body.textContent;
@@ -418,34 +493,64 @@ async function processRDFPayload(stream, redirect, decoder, format, baseIRI) {
 
 /**
  * Intercept the Solid-OIDC redirect (a navigation to the identity API redirect
- * URL, https://<id>.extensions.allizom.org/, which does not resolve) and bounce
- * the tab to the template page in auth mode, carrying the OAuth response params.
- * Running the token exchange on the template page (a moz-extension:// origin)
- * lets the auth library complete its same-origin history cleanup without the
- * cross-origin SecurityError that a real redirect-origin page would cause.
+ * URL, https://<id>.extensions.allizom.org/, which does not resolve). On a
+ * successful authorization, complete the token exchange IN THE BACKGROUND (so
+ * the session + DPoP key stay in the persistent background page), then navigate
+ * the originating tab to the requested resource; meanwhile park the defunct
+ * redirect navigation on a lightweight "completing login" page. On an error,
+ * bounce to the login screen with the error details.
+ *
+ * This is a blocking onBeforeRequest listener, so it cannot await the async
+ * exchange and still return a redirect synchronously — it fires completeLogin()
+ * and returns the spinner redirect immediately.
  * @param details The details of the intercepted request
- * @returns {{redirectUrl: string}|{}} A redirect to the template page, or {}
+ * @returns {{redirectUrl: string}|{}} A redirect, or {}
  */
+function loginErrorUrl(target, errorDescription) {
+    let u = browser.runtime.getURL(templatePath) + "?auth=1";
+    if (target)
+        u += "&url=" + encodeURIComponent(target);
+    u += "&error=" + encodeURIComponent("login_failed");
+    if (errorDescription)
+        u += "&error_description=" + encodeURIComponent(errorDescription);
+    return u;
+}
+
 function interceptAuthRedirect(details) {
     const url = new URL(details.url);
     const code = url.searchParams.get("code");
-    const state = url.searchParams.get("state");
     const error = url.searchParams.get("error");
     if (!code && !error)
         return {};
-    let target = browser.runtime.getURL(templatePath) + "?auth=1";
     if (code) {
-        target += "&code=" + encodeURIComponent(code)
-            + "&state=" + encodeURIComponent(state || "");
-        const iss = url.searchParams.get("iss");
-        if (iss)
-            target += "&iss=" + encodeURIComponent(iss);
-    } else {
-        target += "&error=" + encodeURIComponent(error);
-        const desc = url.searchParams.get("error_description");
-        if (desc)
-            target += "&error_description=" + encodeURIComponent(desc);
+        auth.completeLogin(details.url).then(result => {
+            const tabId = (result && result.tabId != null) ? result.tabId : details.tabId;
+            console.warn("RDF Browser interceptAuthRedirect: navigating tab", tabId, {
+                isLoggedIn: result && result.isLoggedIn, target: result && result.target
+            });
+            if (result && result.isLoggedIn && result.target) {
+                browser.tabs.update(tabId, {url: result.target});
+            } else if (result && result.isLoggedIn) {
+                // Logged in but the target was lost (e.g. background restarted
+                // mid-login); land on a neutral "logged in" page instead of
+                // leaving the spinner up forever.
+                browser.tabs.update(tabId, {url: browser.runtime.getURL(templatePath) + "?auth=loggedin"});
+            } else {
+                // Token exchange failed (e.g. an expired code, or a 429 from the
+                // IdP under rate limiting). Show the login screen with the error
+                // rather than a stuck spinner.
+                browser.tabs.update(tabId, {url: loginErrorUrl(result && result.target, result && result.error)});
+            }
+        }).catch(e => {
+            browser.tabs.update(details.tabId, {url: loginErrorUrl(null, (e && e.message) ? e.message : String(e))});
+        });
+        return {redirectUrl: browser.runtime.getURL(templatePath) + "?auth=complete"};
     }
+    let target = browser.runtime.getURL(templatePath) + "?auth=1";
+    target += "&error=" + encodeURIComponent(error);
+    const desc = url.searchParams.get("error_description");
+    if (desc)
+        target += "&error_description=" + encodeURIComponent(desc);
     return {redirectUrl: target};
 }
 

@@ -39,17 +39,9 @@ async function initSolid() {
 }
 
 function solidLogout() {
-    // The library state lives in the shared moz-extension localStorage; removing
-    // it prevents future session restores. (Access tokens are held in memory by
-    // already-open authenticated pages and expire with them.)
-    try {
-        for (const key of Object.keys(localStorage)) {
-            if (key.toLowerCase().includes("solid") || key.toLowerCase().includes("oidc"))
-                localStorage.removeItem(key);
-        }
-    } catch (ignored) {
-    }
-    browser.storage.local.remove(["solidWebId", "solidPendingResource"]).then(() => window.close());
+    // The session lives in the (persistent) background page's memory, so logout
+    // must run there; the background clears the session and the solidWebId.
+    browser.runtime.sendMessage(["logout"]).then(() => window.close());
 }
 
 function setCheckboxes() {

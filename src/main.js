@@ -3,6 +3,7 @@ const interceptor = require('./app/interceptor');
 const ts = require('./bdo/triplestore');
 const utils = require('./app/utils');
 const content = require('./app/content.js');
+const auth = require('./app/auth');
 const defaultOptions = {
     json: true,
     n4: true,
@@ -171,6 +172,21 @@ function initMessageListeners() {
             case "requestDetails":
                 sendResponse(interceptor.getRequestDetails(message[1]));
                 break;
+            // Solid session lives in this (persistent) background page. The
+            // login screen / popup drive it via these messages.
+            case "startLogin":
+                // sender.tab.id is how the login screen supplies a tab to
+                // navigate to the IdP (the screen itself has no tab handle).
+                auth.startLogin(message[1], message[2], sender.tab.id)
+                    .then(() => sendResponse({ok: true}))
+                    .catch(e => sendResponse({ok: false, error: (e && e.message) ? e.message : String(e)}));
+                return true;
+            case "logout":
+                auth.logout().then(() => sendResponse({ok: true}));
+                return true;
+            case "sessionStatus":
+                auth.getStatus().then(status => sendResponse(status));
+                return true;
         }
     });
 }
@@ -371,10 +387,9 @@ if (document.body.id === "template") {
         }
     } catch (ignored) {
     }
-    // Clear the session marker, but NOT solidPendingResource: that holds the
-    // resource URL to render after login, and must survive a background-page
-    // restart that can happen mid-login (while the user is at the IdP). Wiping
-    // it here would leave a logged-in session with no target → blank page.
+    // Clear the WebID status marker on background start-up. The session itself
+    // lives in this page's memory and is gone with the restart anyway (session
+    // only), so navigating to a protected resource will prompt a fresh login.
     browser.storage.local.remove("solidWebId");
     ts.fetchDynamicContents().then(() => {
     });
