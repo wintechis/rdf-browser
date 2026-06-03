@@ -50,147 +50,195 @@ async function initNormal(params) {
 async function initAuth(params) {
     const authParam = params.get("auth");
     if (authParam === "complete") {
-        showAuthLoading("Completing login…");
+        renderAuthMessage("Signing in", "Completing login…", true);
         return;
     }
     if (authParam === "loggedin") {
         // Logged in, but no resource to open (target was lost). Not an error.
-        document.getElementById("title").innerText = "RDF Browser";
-        document.getElementById("status").innerText = "logged in";
+        renderAuthMessage("Signed in",
+            "You are logged in. Enter a resource URL in the address bar to open it.", false);
         return;
     }
     const target = params.has("url") ? decodeURIComponent(params.get("url")) : null;
+    let errorMessage = null;
     if (params.get("error")) {
         const desc = params.get("error_description");
-        const message = (params.get("error") === "login_failed")
+        errorMessage = (params.get("error") === "login_failed")
             ? (desc || "The login did not complete. Please try again.")
-            : ("The identity provider returned an error: " + params.get("error") + (desc ? " - " + desc : ""));
-        renderLoginScreen(target, message);
-        return;
+            : ("The identity provider returned an error: " + params.get("error") + (desc ? " — " + desc : ""));
     }
-    renderLoginScreen(target, null);
+    renderLoginScreen(target, errorMessage);
 }
 
 /**
- * Show a spinner with a message in the header status area while the
- * authenticated resource is being fetched after login. Leaves #main (and its
- * #prefixes / #triples targets) intact so loadContent can render into them;
- * loadContent overwrites the status text once it reaches serialization.
+ * Inject the minimal-flat stylesheet for the auth pages (login / completing /
+ * signed-in) and the spinner keyframes. Scoped to body.rdfb-auth so it also
+ * hides the Turtle-view chrome (header/aside) and lets #main flow normally.
  */
-function showAuthLoading(message) {
-    ensureSpinnerStyle();
-    const status = document.getElementById("status");
-    while (status.firstChild)
-        status.firstChild.remove();
-    const spinner = document.createElement("span");
-    spinner.setAttribute("class", "solid-spinner");
-    const text = document.createElement("span");
-    text.setAttribute("style", "margin-left: .5em;");
-    text.innerText = message;
-    status.appendChild(spinner);
-    status.appendChild(text);
-}
-
-/**
- * Inject the spinner keyframes once (the template stylesheet has none).
- */
-function ensureSpinnerStyle() {
-    if (document.getElementById("#solid-spin-style"))
+function ensureAuthStyle() {
+    if (document.getElementById("rdfb-auth-style"))
         return;
-    const spinStyle = document.createElement("style");
-    spinStyle.setAttribute("id", "#solid-spin-style");
-    spinStyle.appendChild(document.createTextNode(
+    const style = document.createElement("style");
+    style.setAttribute("id", "rdfb-auth-style");
+    style.appendChild(document.createTextNode(
         "@keyframes solid-spin{to{transform:rotate(360deg)}}" +
         ".solid-spinner{display:inline-block;width:1em;height:1em;vertical-align:-0.15em;" +
         "border:2px solid currentColor;border-right-color:transparent;border-radius:50%;" +
-        "animation:solid-spin 0.7s linear infinite;}"));
-    document.head.appendChild(spinStyle);
+        "animation:solid-spin .7s linear infinite;}" +
+        "body.rdfb-auth{margin:0;background:#fff;color:#1b1b1b;line-height:1.55;" +
+        "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;}" +
+        "body.rdfb-auth>header,body.rdfb-auth>aside{display:none!important;}" +
+        "body.rdfb-auth>main{position:static!important;width:auto!important;height:auto!important;" +
+        "margin:0!important;overflow:visible!important;}" +
+        // Set font/white-space explicitly: style.js applies the Turtle theme
+        // (monospace, nowrap) to <main>, which this content would otherwise
+        // inherit.
+        ".rdfb-wrap{max-width:40rem;margin:0 auto;padding:3rem 1.5rem;white-space:normal;" +
+        "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;}" +
+        ".rdfb-wrap h1{font-size:1.35rem;font-weight:600;margin:0 0 1rem;padding-bottom:.6rem;" +
+        "border-bottom:1px solid #e6e6e6;}" +
+        ".rdfb-wrap p{margin:1rem 0;}" +
+        ".rdfb-muted{color:#5c5c5c;}" +
+        ".rdfb-wrap code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;" +
+        "font-size:.95em;word-break:break-all;}" +
+        ".rdfb-label{display:block;font-size:.8rem;color:#444;margin:1.5rem 0 .4rem;}" +
+        ".rdfb-input{width:100%;box-sizing:border-box;padding:.6rem .7rem;font-size:1rem;" +
+        "border:1px solid #ccc;border-radius:6px;background:#fff;color:inherit;}" +
+        ".rdfb-input:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.15);}" +
+        ".rdfb-actions{display:flex;gap:.6rem;flex-wrap:wrap;margin-top:1.5rem;}" +
+        ".rdfb-btn{font:inherit;cursor:pointer;padding:.55rem 1.1rem;border-radius:6px;border:1px solid transparent;}" +
+        ".rdfb-btn-primary{background:#2563eb;color:#fff;}" +
+        ".rdfb-btn-primary:hover{background:#1d4ed8;}" +
+        ".rdfb-btn-primary:disabled{background:#9db8ef;cursor:default;}" +
+        ".rdfb-error{color:#b00020;white-space:pre-wrap;word-break:break-word;}"));
+    document.head.appendChild(style);
 }
 
 /**
- * Render a Solid login prompt (issuer pre-filled, editable) for a protected
- * resource. On submit, the redirect-based login flow is started.
- * @param target The protected resource URL to render after login
- * @param errorMessage Optional message to show (e.g. a prior failed attempt)
+ * Prepare the page as a clean auth screen: inject styles, hide the Turtle-view
+ * chrome, reset #main, and return a centred content wrapper to fill.
  */
-function renderLoginScreen(target, errorMessage) {
-    document.getElementById("title").innerText = "Solid login required";
+function renderAuthShell() {
+    ensureAuthStyle();
+    document.body.classList.add("rdfb-auth");
     const main = document.getElementById("main");
     while (main.firstChild)
         main.firstChild.remove();
     main.removeAttribute("style");
+    const wrap = document.createElement("div");
+    wrap.className = "rdfb-wrap";
+    main.appendChild(wrap);
+    return wrap;
+}
 
-    ensureSpinnerStyle();
+/**
+ * Render a simple titled message page (optionally with a spinner) — used for
+ * the "Completing login…" and "Signed in" states.
+ */
+function renderAuthMessage(title, message, withSpinner) {
+    document.getElementById("title").innerText = "RDF Browser";
+    const wrap = renderAuthShell();
+    const h1 = document.createElement("h1");
+    h1.textContent = title;
+    wrap.appendChild(h1);
+    const p = document.createElement("p");
+    p.className = "rdfb-muted";
+    if (withSpinner) {
+        const spinner = document.createElement("span");
+        spinner.className = "solid-spinner";
+        p.appendChild(spinner);
+        const text = document.createElement("span");
+        text.style.marginLeft = ".6rem";
+        text.textContent = message;
+        p.appendChild(text);
+    } else {
+        p.textContent = message;
+    }
+    wrap.appendChild(p);
+}
 
-    const container = document.createElement("div");
-    container.setAttribute("style", "padding: 2em; max-width: 44em; font-family: sans-serif; line-height: 1.4;");
+/**
+ * Render a Solid login prompt (issuer pre-filled, editable) for a protected
+ * resource. On submit, the background-driven login flow is started.
+ * @param target The protected resource URL to render after login
+ * @param errorMessage Optional message to show (e.g. a prior failed attempt)
+ */
+function renderLoginScreen(target, errorMessage) {
+    document.getElementById("title").innerText = "Sign in to Solid";
+    const wrap = renderAuthShell();
 
-    const heading = document.createElement("h2");
-    heading.appendChild(document.createTextNode("Authentication required"));
-    container.appendChild(heading);
+    const heading = document.createElement("h1");
+    heading.textContent = "Sign in to Solid";
+    wrap.appendChild(heading);
 
     const intro = document.createElement("p");
+    intro.className = "rdfb-muted";
     intro.appendChild(document.createTextNode("The resource "));
     const code = document.createElement("code");
-    code.appendChild(document.createTextNode(target || "(unknown)"));
+    code.textContent = target || "(unknown)";
     intro.appendChild(code);
-    intro.appendChild(document.createTextNode(" requires a Solid login. Enter your Solid identity provider and log in."));
-    container.appendChild(intro);
+    intro.appendChild(document.createTextNode(" requires authentication."));
+    wrap.appendChild(intro);
 
     const label = document.createElement("label");
-    label.appendChild(document.createTextNode("Identity provider: "));
-    const input = document.createElement("input");
-    input.setAttribute("type", "text");
-    input.setAttribute("value", "https://solidcommunity.net");
-    input.setAttribute("style", "width: 24em; margin-right: .5em;");
-    label.appendChild(input);
-    container.appendChild(label);
+    label.className = "rdfb-label";
+    label.setAttribute("for", "rdfb-idp");
+    label.textContent = "Identity provider";
+    wrap.appendChild(label);
 
+    const input = document.createElement("input");
+    input.className = "rdfb-input";
+    input.setAttribute("type", "text");
+    input.setAttribute("id", "rdfb-idp");
+    input.setAttribute("spellcheck", "false");
+    input.value = "https://solidcommunity.net";
+    wrap.appendChild(input);
+
+    const actions = document.createElement("div");
+    actions.className = "rdfb-actions";
     const button = document.createElement("button");
-    button.appendChild(document.createTextNode("Log in"));
-    container.appendChild(button);
+    button.className = "rdfb-btn rdfb-btn-primary";
+    button.textContent = "Log in";
+    actions.appendChild(button);
+    wrap.appendChild(actions);
 
     // Inline progress indicator shown while the login flow is running.
     const progress = document.createElement("p");
-    progress.setAttribute("style", "margin-top: 1em;");
-    progress.setAttribute("hidden", "hidden");
+    progress.className = "rdfb-muted";
+    progress.hidden = true;
     const spinner = document.createElement("span");
-    spinner.setAttribute("class", "solid-spinner");
+    spinner.className = "solid-spinner";
     const progressText = document.createElement("span");
-    progressText.setAttribute("style", "margin-left: .6em;");
+    progressText.style.marginLeft = ".6rem";
     progress.appendChild(spinner);
     progress.appendChild(progressText);
-    container.appendChild(progress);
+    wrap.appendChild(progress);
 
     const error = document.createElement("p");
-    error.setAttribute("style", "color: darkred;");
-    container.appendChild(error);
+    error.className = "rdfb-error";
+    if (errorMessage)
+        error.textContent = errorMessage;
+    wrap.appendChild(error);
 
     function showProgress(message) {
-        progressText.innerText = message;
-        progress.removeAttribute("hidden");
-        document.getElementById("status").innerText = message;
-    }
-
-    function hideProgress(statusMessage) {
-        progress.setAttribute("hidden", "hidden");
-        document.getElementById("status").innerText = statusMessage;
+        progressText.textContent = message;
+        progress.hidden = false;
     }
 
     async function submit() {
-        button.setAttribute("disabled", "disabled");
-        input.setAttribute("disabled", "disabled");
-        error.innerText = "";
+        button.disabled = true;
+        input.disabled = true;
+        error.textContent = "";
         showProgress("Redirecting to identity provider…");
         // The background owns the session: it runs the login and navigates THIS
         // tab to the IdP (via sender.tab.id). The spinner stays up until the
         // page unloads. A failure before navigation comes back as {ok:false}.
         const result = await browser.runtime.sendMessage(["startLogin", input.value.trim(), target]);
         if (result && result.ok === false) {
-            error.innerText = "Login failed: " + (result.error || "unknown error");
-            button.removeAttribute("disabled");
-            input.removeAttribute("disabled");
-            hideProgress("login required");
+            error.textContent = "Login failed: " + (result.error || "unknown error");
+            button.disabled = false;
+            input.disabled = false;
+            progress.hidden = true;
         }
     }
 
@@ -199,12 +247,7 @@ function renderLoginScreen(target, errorMessage) {
         if (event.key === "Enter")
             submit();
     });
-
-    if (errorMessage)
-        error.innerText = errorMessage;
-
-    main.appendChild(container);
-    document.getElementById("status").innerText = "login required";
+    input.focus();
 }
 
 /**

@@ -182,16 +182,19 @@ async function modifyResponseHeader(details) {
 
 /**
  * Fetch a protected resource with the background Solid session and render it in
- * place. The fetch happens BEFORE the StreamFilter is attached so that a
- * non-2xx result (403/404/5xx) or a network error can be shown as a proper
- * error page (a clean redirect), rather than a blank tab.
+ * place. On success the body is rendered as Turtle; on a non-2xx result
+ * (403/404/5xx) or a network error a styled error page is written INTO the
+ * stream filter at the resource's real URL. The error must be written to the
+ * filter (not returned as a redirect): a redirect returned from
+ * onHeadersReceived after the async authFetch arrives too late, so Firefox
+ * drops it and the navigation reverts to the previous page.
  */
 async function renderAuthenticatedResource(cl, details, encoding, format) {
     let response;
     try {
         response = await auth.authFetch(details.url);
     } catch (e) {
-        return {redirectUrl: errorPageUrl(details.url, 0, "Could not load the resource: " + ((e && e.message) || e), "")};
+        return writeErrorPage(details, 0, "Could not load the resource", (e && e.message) || String(e));
     }
     if (!response.ok) {
         let detail = "";
@@ -199,7 +202,7 @@ async function renderAuthenticatedResource(cl, details, encoding, format) {
             detail = (await response.text()).slice(0, 600);
         } catch (ignored) {
         }
-        return {redirectUrl: errorPageUrl(details.url, response.status, response.statusText, detail)};
+        return writeErrorPage(details, response.status, response.statusText, detail);
     }
     // Prefer the real resource's own content-type now that we have it; the
     // format/encoding guessed from the 401 challenge may not match the resource.
@@ -210,11 +213,37 @@ async function renderAuthenticatedResource(cl, details, encoding, format) {
 }
 
 /**
- * Build a URL to the shared error page for an HTTP/network failure, carrying
- * the resource URL and status so the error page can show the reason and offer
- * a (re-)login for 401/403.
+ * Render a styled error page for the current main_frame request by writing it
+ * into the response stream filter (so the navigation commits at the real URL).
  */
-function errorPageUrl(resourceUrl, status, statusText, detail) {
+function writeErrorPage(details, status, statusText, detail) {
+    const filter = browser.webRequest.filterResponseData(details.requestId);
+    const encoder = new TextEncoder();
+    const html = buildErrorPage(details.url, status, statusText, detail);
+    // Write at onstop so the filter is connected; the original (401) body is
+    // received but not forwarded, so our HTML fully replaces it.
+    filter.onstop = () => {
+        filter.write(encoder.encode(html));
+        filter.close();
+    };
+    filter.onerror = () => {
+    };
+    return {
+        responseHeaders: [
+            {name: "Content-Type", value: "text/html; charset=utf-8"},
+            {name: "Cache-Control", value: "no-cache, no-store, must-revalidate"},
+            {name: "Pragma", value: "no-cache"},
+            {name: "Expires", value: "0"}
+        ]
+    };
+}
+
+/**
+ * Build a self-contained, minimal-flat error page (no external script) for an
+ * HTTP/network failure on a protected resource, with a Log in action for
+ * 401/403 and a Refresh link. Rendered in place at the resource's URL.
+ */
+function buildErrorPage(url, status, statusText, detail) {
     const phrases = {
         401: "Unauthorized — authentication is required.",
         403: "Forbidden — you are authenticated, but not authorized to access this resource.",
@@ -224,13 +253,43 @@ function errorPageUrl(resourceUrl, status, statusText, detail) {
         503: "Service Unavailable."
     };
     const reason = statusText || phrases[status] || "The resource could not be retrieved.";
-    let message = status ? ("HTTP " + status + " — " + reason) : reason;
-    if (detail)
-        message += "\n\n" + detail;
-    return browser.runtime.getURL("build/view/error.html?url=")
-        + encodeURIComponent(resourceUrl)
-        + "&httpStatus=" + encodeURIComponent(status || "")
-        + "&message=" + encodeURIComponent(message);
+    const statusLine = status ? ("HTTP " + status + " — " + reason) : reason;
+    const esc = s => String(s == null ? "" : s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    const loginUrl = browser.runtime.getURL(templatePath) + "?auth=1&url=" + encodeURIComponent(url);
+    const loginBtn = (status === 401 || status === 403)
+        ? '<a class="rdfb-btn rdfb-btn-primary" href="' + esc(loginUrl) + '">'
+        + (status === 403 ? "Log in as a different identity" : "Log in") + "</a>"
+        : "";
+    const detailBlock = detail ? ('<pre class="rdfb-detail">' + esc(detail) + "</pre>") : "";
+    return "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\">"
+        + "<title>RDF Browser — Error</title><style>"
+        + ":root{color-scheme:light}"
+        + "body{margin:0;background:#fff;color:#1b1b1b;line-height:1.55;"
+        + "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}"
+        + ".wrap{max-width:40rem;margin:0 auto;padding:3rem 1.5rem}"
+        + "h1{font-size:1.35rem;font-weight:600;margin:0 0 1rem;padding-bottom:.6rem;border-bottom:1px solid #e6e6e6}"
+        + "p{margin:1rem 0}.muted{color:#5c5c5c}"
+        + "a.rdfb-url{color:#2563eb;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;"
+        + "font-size:.95em;word-break:break-all}"
+        + ".rdfb-detail{background:#f6f6f6;border:1px solid #ececec;border-radius:6px;padding:.8rem;overflow:auto;"
+        + "white-space:pre-wrap;word-break:break-word;"
+        + "font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.85rem}"
+        + ".rdfb-actions{display:flex;gap:.6rem;flex-wrap:wrap;margin-top:1.5rem}"
+        + ".rdfb-btn{font:inherit;cursor:pointer;text-decoration:none;display:inline-block;"
+        + "padding:.55rem 1.1rem;border-radius:6px;border:1px solid #ccc;background:#fff;color:#1b1b1b}"
+        + ".rdfb-btn:hover{background:#f4f4f4}"
+        + ".rdfb-btn-primary{background:#2563eb;color:#fff;border-color:transparent}"
+        + ".rdfb-btn-primary:hover{background:#1d4ed8}"
+        + "</style></head><body><div class=\"wrap\">"
+        + "<h1>This resource couldn’t be displayed</h1>"
+        + "<p class=\"muted\">RDF Browser could not render <a class=\"rdfb-url\" href=\"" + esc(url) + "\">"
+        + esc(url) + "</a>.</p>"
+        + "<p>" + esc(statusLine) + "</p>"
+        + detailBlock
+        + "<div class=\"rdfb-actions\">" + loginBtn
+        + "<a class=\"rdfb-btn\" href=\"" + esc(url) + "\">Refresh</a></div>"
+        + "</div></body></html>";
 }
 
 /**
