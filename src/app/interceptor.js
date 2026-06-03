@@ -525,9 +525,6 @@ function interceptAuthRedirect(details) {
     if (code) {
         auth.completeLogin(details.url).then(result => {
             const tabId = (result && result.tabId != null) ? result.tabId : details.tabId;
-            console.warn("RDF Browser interceptAuthRedirect: navigating tab", tabId, {
-                isLoggedIn: result && result.isLoggedIn, target: result && result.target
-            });
             if (result && result.isLoggedIn && result.target) {
                 browser.tabs.update(tabId, {url: result.target});
             } else if (result && result.isLoggedIn) {

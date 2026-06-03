@@ -101,18 +101,10 @@ async function completeLogin(redirectUrl) {
     let captured = null;
     const realFetch = globalThis.fetch.bind(globalThis);
     globalThis.fetch = async function (input, init) {
-        const reqUrl = (typeof input === "string") ? input : (input && input.url) || "";
-        console.warn("RDF Browser exchange fetch →", (init && init.method) || "GET", reqUrl);
-        let response;
-        try {
-            response = await realFetch(input, init);
-        } catch (e) {
-            console.warn("RDF Browser exchange fetch ✗", reqUrl, e && e.message);
-            throw e;
-        }
-        console.warn("RDF Browser exchange fetch ←", response.status, reqUrl);
+        const response = await realFetch(input, init);
         try {
             if (!response.ok) {
+                const reqUrl = (typeof input === "string") ? input : (input && input.url) || "";
                 if (!issuerHost || hostOf(reqUrl) === issuerHost)
                     captured = {
                         url: reqUrl,
@@ -147,7 +139,6 @@ async function completeLogin(redirectUrl) {
     } catch (ignored) {
     }
     try {
-        console.warn("RDF Browser completeLogin: starting token exchange for", redirectUrl);
         // Bound the exchange so a stalled token endpoint (e.g. rate limited)
         // surfaces as an error instead of an endless "Completing login…" spinner.
         await Promise.race([
@@ -179,11 +170,6 @@ async function completeLogin(redirectUrl) {
         error = error ? (raw + "\n\n(" + error + ")") : raw;
     }
 
-    console.warn("RDF Browser completeLogin: done", {
-        isLoggedIn: session.info.isLoggedIn,
-        target: pendingLogin ? pendingLogin.target : null,
-        error: error
-    });
     const result = {
         isLoggedIn: session.info.isLoggedIn,
         webId: session.info.webId || null,

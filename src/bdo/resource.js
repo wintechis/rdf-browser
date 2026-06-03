@@ -89,6 +89,15 @@ class URI extends Resource {
                     uriValue = "";
                 else if (new URL(this.value.split("#")[0]).href === new URL(baseURL.split("#")[0]).href)
                     uriValue = this.value.substring(this.value.split("#")[0].length);
+                else {
+                    // Show same-origin references relative to the base — a
+                    // descendant as <child/>, a sibling as <../sibling/>, the
+                    // parent as <../> — matching how containers serialise their
+                    // members. Different-origin references stay absolute.
+                    const rel = relativeReference(this.value, baseURL);
+                    if (rel !== null)
+                        uriValue = rel;
+                }
             } catch(e) {
                 if ((this.value.replace("https", "http").split("#"))[0] ===
                     (baseURL.replace("https", "http").split("#")[0]))
@@ -209,6 +218,40 @@ class Literal extends Resource {
     getTypeNumber() {
         return 2;
     }
+}
+
+/**
+ * Compute an RFC 3986 relative reference for `targetHref` against `baseHref`
+ * (e.g. "child/", "../sibling/", "../"), so resolving it against the base yields
+ * the target. Returns null when they are not the same origin (keep it absolute).
+ */
+function relativeReference(targetHref, baseHref) {
+    let t, b;
+    try {
+        t = new URL(targetHref);
+        b = new URL(baseHref);
+    } catch (e) {
+        return null;
+    }
+    if (t.protocol !== b.protocol || t.host !== b.host)
+        return null;
+    const tParts = t.pathname.split("/");
+    const bParts = b.pathname.split("/");
+    // Relative refs resolve against the base's directory, i.e. everything up to
+    // its last "/": drop the base's final segment (a file name, or the empty
+    // string after a trailing slash).
+    bParts.pop();
+    let i = 0;
+    while (i < bParts.length && i < tParts.length && bParts[i] === tParts[i])
+        i++;
+    const up = bParts.length - i;
+    const down = tParts.slice(i);
+    let rel = "../".repeat(up) + down.join("/");
+    if (rel === "")
+        rel = "./"; // target is the base directory itself
+    else if (up === 0 && /^[^/]*:/.test(rel))
+        rel = "./" + rel; // first segment with ':' would be read as a scheme
+    return rel + t.search + t.hash;
 }
 
 function compareValues(a, b) {
