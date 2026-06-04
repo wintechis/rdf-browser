@@ -148,6 +148,16 @@ async function modifyResponseHeader(details) {
     return await rewriteResponse(cl, details, encoding, format, redirect);
 }
 
+// Read the start of a response body for an error-page detail block, tolerating
+// a body that can't be read (e.g. already consumed or an opaque error).
+async function bodySnippet(response, max = 600) {
+    try {
+        return (await response.text()).slice(0, max);
+    } catch (ignored) {
+        return "";
+    }
+}
+
 /**
  * Fetch a protected resource with the background Solid session and render it in
  * place. On success the body is rendered as Turtle; on a non-2xx result
@@ -164,14 +174,8 @@ async function renderAuthenticatedResource(cl, details, encoding, format) {
     } catch (e) {
         return writeErrorPage(details, 0, "Could not load the resource", (e && e.message) || String(e));
     }
-    if (!response.ok) {
-        let detail = "";
-        try {
-            detail = (await response.text()).slice(0, 600);
-        } catch (ignored) {
-        }
-        return writeErrorPage(details, response.status, response.statusText, detail);
-    }
+    if (!response.ok)
+        return writeErrorPage(details, response.status, response.statusText, await bodySnippet(response));
     // Prefer the real resource's own content-type now that we have it; the
     // format/encoding guessed from the 401 challenge may not match the resource.
     const contentType = response.headers.get("Content-Type") || "";
@@ -307,14 +311,8 @@ async function rewriteResponse(cl, details, encoding, format, redirect, prefetch
             // than closing it empty (a blank tab) or leaving the navigation hung.
             return respondWithHtml(filter, buildErrorPage(url, 0, "Could not load the resource", (e && e.message) || String(e)));
         }
-        if (!response.ok) {
-            let detail = "";
-            try {
-                detail = (await response.text()).slice(0, 600);
-            } catch (ignored) {
-            }
-            return respondWithHtml(filter, buildErrorPage(url, response.status, response.statusText, detail));
-        }
+        if (!response.ok)
+            return respondWithHtml(filter, buildErrorPage(url, response.status, response.statusText, await bodySnippet(response)));
         const body = await response.body;
         stream = body.getReader();
     } else
