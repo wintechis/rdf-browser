@@ -19,6 +19,7 @@ const browser = window.browser;
  */
 
 const solidAuth = require("@inrupt/solid-client-authn-browser");
+const {withRetry} = require("./retryFetch");
 
 // In-memory record of an in-flight login: the resource to open afterwards and
 // the tab that initiated it. Lives in the persistent background page, so it
@@ -304,8 +305,14 @@ async function registerClient(oidcIssuer, redirectUrl) {
 async function authFetch(input, init) {
     const {getDefaultSession} = await lib();
     const session = getDefaultSession();
+    // Solid pod providers sit behind Cloudflare, which throttles bursts with a
+    // transient 429 (and can stall the connection without ever answering). Retry
+    // those automatically with backoff and bound each attempt with a timeout, so
+    // a throttled lookup recovers on its own instead of hanging or rendering an
+    // empty page — i.e. do for the user what reloading the page does by hand.
     if (!session.info.isLoggedIn)
-        return fetch(input, init);
+        return withRetry((i, n) => fetch(i, n))(input, init);
+    const retryingFetch = withRetry((u, n) => session.fetch(u, n));
     if (input instanceof Request) {
         const request = input;
         const headers = {};
@@ -319,9 +326,9 @@ async function authFetch(input, init) {
             mode: request.mode,
             redirect: request.redirect
         }, init);
-        return session.fetch(request.url, merged);
+        return retryingFetch(request.url, merged);
     }
-    return session.fetch(input, init);
+    return retryingFetch(input, init);
 }
 
 /**

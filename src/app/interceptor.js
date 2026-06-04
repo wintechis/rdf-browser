@@ -4,6 +4,7 @@ const serializer = require("./serializer");
 const utils = require('./utils');
 const auth = require('./auth');
 const pagestyle = require('./pagestyle');
+const {withRetry} = require('./retryFetch');
 const styleScriptPath = "build/controller/style.js";
 const templatePath = "build/view/template.html";
 const filter = {
@@ -180,19 +181,26 @@ async function renderAuthenticatedResource(cl, details, encoding, format) {
 }
 
 /**
- * Render a styled error page for the current main_frame request by writing it
- * into the response stream filter (so the navigation commits at the real URL).
+ * Replace a response body with the given HTML by writing it into an already
+ * attached stream filter, and return the html response headers to commit the
+ * navigation at the real URL. Writes on the first filter event (onstart or
+ * onstop) and exactly once: relying on onstop alone can leave a blank page if
+ * the original response delivers no body or the event timing shifts under a
+ * slow/retried upstream. The original body is never forwarded, so the HTML
+ * fully replaces it.
  */
-function writeErrorPage(details, status, statusText, detail) {
-    const filter = browser.webRequest.filterResponseData(details.requestId);
+function respondWithHtml(filter, html) {
     const encoder = new TextEncoder();
-    const html = buildErrorPage(details.url, status, statusText, detail);
-    // Write at onstop so the filter is connected; the original (401) body is
-    // received but not forwarded, so our HTML fully replaces it.
-    filter.onstop = () => {
+    let written = false;
+    const writeOnce = () => {
+        if (written)
+            return;
+        written = true;
         filter.write(encoder.encode(html));
         filter.close();
     };
+    filter.onstart = writeOnce;
+    filter.onstop = writeOnce;
     filter.onerror = () => {
     };
     return {
@@ -203,6 +211,16 @@ function writeErrorPage(details, status, statusText, detail) {
             {name: "Expires", value: "0"}
         ]
     };
+}
+
+/**
+ * Render a styled error page for the current main_frame request by writing it
+ * into the response stream filter (so the navigation commits at the real URL).
+ */
+function writeErrorPage(details, status, statusText, detail) {
+    const filter = browser.webRequest.filterResponseData(details.requestId);
+    const html = buildErrorPage(details.url, status, statusText, detail);
+    return respondWithHtml(filter, html);
 }
 
 /**
@@ -280,17 +298,22 @@ async function rewriteResponse(cl, details, encoding, format, redirect, prefetch
     } else if (redirect && url !== details.url) {
         let response;
         try {
-            response = await fetch(url);
+            // Retry transient Cloudflare throttling (429/503) with backoff and a
+            // per-attempt timeout, so a redirected RDF lookup recovers instead of
+            // hanging or going blank.
+            response = await withRetry((u, n) => fetch(u, n))(url);
         } catch (e) {
-            // Closing the filter is essential: returning while it is still
-            // attached leaves the original response stream open and the tab
-            // hangs until it times out.
-            filter.close();
-            return {};
+            // The filter is already attached; write an error page into it rather
+            // than closing it empty (a blank tab) or leaving the navigation hung.
+            return respondWithHtml(filter, buildErrorPage(url, 0, "Could not load the resource", (e && e.message) || String(e)));
         }
         if (!response.ok) {
-            filter.close();
-            return {};
+            let detail = "";
+            try {
+                detail = (await response.text()).slice(0, 600);
+            } catch (ignored) {
+            }
+            return respondWithHtml(filter, buildErrorPage(url, response.status, response.statusText, detail));
         }
         const body = await response.body;
         stream = body.getReader();
