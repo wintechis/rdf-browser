@@ -82,8 +82,6 @@ function modifyRequestHeader(details) {
     for (let headerField of details.requestHeaders) {
         if (headerField.name.toLowerCase() === "accept") {
             headerField.value = getNewAcceptHeader(headerField.value, details.url);
-        } else if (headerField.name.toLowerCase() === "accept-language") {
-            headerField.value = options.acceptLanguage
         }
     }
     return {requestHeaders: details.requestHeaders};
