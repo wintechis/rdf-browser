@@ -224,5 +224,36 @@
 
     </div>
 </main>
+<script id="hashnav">
+    // The triples render inside a position:fixed, overflow:auto main element
+    // that scrolls independently of the window, so the browser's native jump
+    // to a #fragment into that container is unreliable. Scroll to the target
+    // id explicitly on load and whenever the fragment changes (e.g. a click on
+    // a self-reference). Keep this block free of the three characters HTML
+    // escapes (angle brackets and ampersand): the template is round-tripped
+    // through DOMParser/XMLSerializer, which would corrupt them inside script.
+    (function () {
+        function scrollToHash() {
+            var hash = location.hash;
+            if (!hash || hash === "#")
+                return;
+            var id;
+            try {
+                id = decodeURIComponent(hash.substring(1));
+            } catch (e) {
+                id = hash.substring(1);
+            }
+            var target = document.getElementById(id);
+            if (target)
+                target.scrollIntoView();
+        }
+
+        window.addEventListener("hashchange", scrollToHash);
+        document.addEventListener("DOMContentLoaded", scrollToHash);
+        // Re-run after the webfont stylesheet has loaded and reflowed layout,
+        // which would otherwise leave the initial jump a few lines off.
+        window.addEventListener("load", scrollToHash);
+    })();
+</script>
 </body>
 </html>

@@ -304,7 +304,12 @@ async function rewriteResponse(cl, details, encoding, format, redirect, prefetch
         return {};
     }
     const encoder = new TextEncoder();
-    const baseIRI = url.toString();
+    // The base IRI of a document never includes a fragment (RFC 3986 §3.5).
+    // Firefox keeps the #fragment in details.url for fragment navigations, so
+    // strip it here: otherwise a self-reference (e.g. <…#it> in a document
+    // whose IRI is <…#it>) would compare equal to the base and be rendered
+    // with an empty href, dropping the fragment when clicked.
+    const baseIRI = url.toString().split("#")[0];
     // processRDFPayload reads via a .read() loop when given a getReader(), and
     // via filter on/ondata events otherwise; fromReader selects the right path.
     processRDFPayload(stream, fromReader, decoder, format, baseIRI).then(output => {
