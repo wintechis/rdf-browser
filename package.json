@@ -14,10 +14,10 @@
     "url": "https://github.com/kianschmalenbach/rdf-browser.git"
   },
   "dependencies": {
-    "@inrupt/solid-client-authn-browser": "^4.0.0",
+    "@inrupt/solid-client-authn-browser": "^5.0.0",
     "jsonld-streaming-parser": "^5.0.1",
     "jsonld-streaming-serializer": "^4.0.0",
-    "n3": "^1.26.0",
+    "n3": "^2.0.3",
     "rdfxml-streaming-parser": "^3.2.0"
   },
   "devDependencies": {
