@@ -310,8 +310,14 @@ async function authFetch(input, init) {
     // those automatically with backoff and bound each attempt with a timeout, so
     // a throttled lookup recovers on its own instead of hanging or rendering an
     // empty page — i.e. do for the user what reloading the page does by hand.
+    // Not OIDC-logged-in: fall back to a plain fetch, but opt into cookies
+    // (credentials: "include"). The extension holds <all_urls> host permission,
+    // so this cross-origin fetch is exempt from CORS and rides whatever cookie
+    // session the browser already holds for the pod — the same ambient session
+    // that authenticates top-level navigations. Without this, sub-resource
+    // fetches (e.g. a followed redirect target) would silently drop the cookie.
     if (!session.info.isLoggedIn)
-        return withRetry((i, n) => fetch(i, n))(input, init);
+        return withRetry((i, n) => fetch(i, n))(input, Object.assign({credentials: "include"}, init));
     const retryingFetch = withRetry((u, n) => session.fetch(u, n));
     if (input instanceof Request) {
         const request = input;

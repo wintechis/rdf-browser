@@ -8,6 +8,7 @@ async function init() {
     document.getElementById("settings").addEventListener("click", () => openSettings());
     await initSiteToggle();
     await initSolid();
+    await initBrowserSession();
 }
 
 /**
@@ -91,6 +92,52 @@ function solidLogout() {
     // The session lives in the (persistent) background page's memory, so logout
     // must run there; the background clears the session and the solidWebId.
     browser.runtime.sendMessage(["logout"]).then(() => window.close());
+}
+
+/**
+ * Surface the browser's ambient cookie session for the pod shown in the current
+ * tab. This is the session that authenticates top-level navigations (and, now
+ * that the extension fetches with credentials, its sub-resource requests too)
+ * INDEPENDENTLY of the Solid-OIDC login — so a user can reach protected
+ * resources without ever logging in through the extension, and the OIDC "Log
+ * out" button does not touch it. Showing it here makes that otherwise-invisible
+ * session legible, and the Clear button makes a full logout possible.
+ */
+async function initBrowserSession() {
+    if (!browser.cookies)
+        return;
+    const tabs = await browser.tabs.query({active: true, currentWindow: true});
+    const tab = tabs[0];
+    const host = tab ? resourceHost(tab.url) : null;
+    if (!host)
+        return;
+    const url = "https://" + host + "/";
+    let cookies;
+    try {
+        cookies = await browser.cookies.getAll({url});
+    } catch (e) {
+        return;
+    }
+    if (!cookies || cookies.length === 0)
+        return;
+    const box = document.getElementById("browserSessionOption");
+    const statusElement = document.getElementById("browserSessionStatus");
+    const button = document.getElementById("clearBrowserSession");
+    statusElement.innerText = "Browser session active for " + host +
+        " (" + cookies.length + " cookie" + (cookies.length === 1 ? "" : "s") + ")";
+    box.removeAttribute("hidden");
+    button.addEventListener("click", async () => {
+        await Promise.all(cookies.map(c => {
+            // Reconstruct each cookie's URL from its own attributes — a leading
+            // "." on the domain denotes a domain cookie and is not part of a host.
+            const domain = c.domain.startsWith(".") ? c.domain.slice(1) : c.domain;
+            const cookieUrl = (c.secure ? "https://" : "http://") + domain + c.path;
+            return browser.cookies.remove({url: cookieUrl, name: c.name, storeId: c.storeId});
+        }));
+        if (tab && (tab.url.startsWith("http") || tab.url.startsWith("moz-extension")))
+            browser.tabs.reload(tab.id);
+        window.close();
+    });
 }
 
 function setCheckboxes() {

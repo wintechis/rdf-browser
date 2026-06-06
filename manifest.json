@@ -38,6 +38,7 @@
     "webRequest",
     "webRequestBlocking",
     "<all_urls>",
+    "cookies",
     "tabs",
     "identity"
   ],

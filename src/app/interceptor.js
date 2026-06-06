@@ -302,8 +302,12 @@ async function rewriteResponse(cl, details, encoding, format, redirect, prefetch
         try {
             // Retry transient Cloudflare throttling (429/503) with backoff and a
             // per-attempt timeout, so a redirected RDF lookup recovers instead of
-            // hanging or going blank.
-            response = await withRetry((u, n) => fetch(u, n))(url);
+            // hanging or going blank. credentials: "include" lets a redirect into
+            // a protected resource ride the browser's ambient cookie session (we
+            // hold <all_urls>, so this cross-origin fetch is CORS-exempt) — without
+            // it the followed request would drop the cookie the top-level
+            // navigation carried and 401 even while the pod session is valid.
+            response = await withRetry((u, n) => fetch(u, n))(url, {credentials: "include"});
         } catch (e) {
             // The filter is already attached; write an error page into it rather
             // than closing it empty (a blank tab) or leaving the navigation hung.
