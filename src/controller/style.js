@@ -24,6 +24,17 @@ function applyStyle(input, contentScript = false) {
             styleValue = styleValue ? array[array.length - 1] : "None";
             array.pop();
         }
+        // :visited can only carry a colour (browser privacy restriction), so it
+        // gets its own dedicated rule (e.g. ".uri a:visited") rather than going
+        // through the generic class/property mapping below. Do not use a logical-and
+        // operator here: this script is round-tripped through DOMParser/XMLSerializer,
+        // which escapes the ampersand character and breaks the inline script.
+        if (array[1] === "visitedColor") {
+            const visitedRule = getStyleRule(stylesheet, "." + array[0] + " a:visited");
+            if (visitedRule !== null)
+                visitedRule.style["color"] = styleValue;
+            continue;
+        }
         let styleClass = ".";
         if (array.length === 1) {
             if (array[0] === "backgroundColor" || setting + contentScript.toString() === "widthtrue")
