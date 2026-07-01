@@ -58,6 +58,13 @@ async function getStatus() {
  */
 async function startLogin(oidcIssuer, target, tabId) {
     const {login} = await lib();
+    // Drop any existing session before starting a new flow. The library keeps a
+    // single default session in this background page; beginning a second login
+    // while one is active leaves it mixed — authFetch keeps signing requests
+    // with the OLD session's token/DPoP key, so the pod answers 403 for the
+    // previous WebID after an apparent identity switch. logout() also resets
+    // pendingLogin, so it must run before the new pending login is recorded.
+    await logout();
     pendingLogin = {target: target || null, tabId, issuer: oidcIssuer};
     const redirectUrl = browser.identity.getRedirectURL();
     // Register the client ourselves so registration failures surface a real
