@@ -65,7 +65,7 @@ class Triplestore {
         return null;
     }
 
-    addPrefix(name, value) {
+    addPrefix(name, value, synthesized = false) {
         if (!value.startsWith("http"))
             return;
         for (const prefix of this.prefixes) {
@@ -79,7 +79,7 @@ class Triplestore {
             this.hasDefaultPrefix = true;
         if (!this.hasBasePrefix && this.baseURL.includes(value))
             this.hasBasePrefix = true;
-        this.prefixes.push(new Prefix(name, new Resource.URI(value)));
+        this.prefixes.push(new Prefix(name, new Resource.URI(value), synthesized));
     }
 
     addTriple(subject, predicate, object) {
@@ -101,6 +101,7 @@ class Triplestore {
         addBasePrefix(this);
         for (const uri in this.uris)
             this.uris[uri].updatePrefix(this.prefixes);
+        addRelativePrefixes(this);
         for (const literal in this.literals)
             this.literals[literal].updatePrefix(this.prefixes);
         removeUnusedPrefixes(this);
@@ -125,23 +126,9 @@ class Triplestore {
             if (!basePrefix.endsWith('/'))
                 basePrefix += '#';
             if (!store.hasDefaultPrefix)
-                store.addPrefix("", basePrefix);
-            else {
-                let name = "base";
-                while (true) {
-                    let success = true;
-                    for (const prefix of store.prefixes) {
-                        if (prefix.name === name) {
-                            name += "1";
-                            success = false;
-                            break;
-                        }
-                    }
-                    if (success)
-                        break;
-                }
-                store.addPrefix(name, basePrefix);
-            }
+                store.addPrefix("", basePrefix, true);
+            else
+                store.addPrefix(uniquePrefixName(store, "base"), basePrefix, true);
         }
 
         function chainBlankNodes(store) {
@@ -159,13 +146,16 @@ class Triplestore {
 }
 
 class Prefix {
-    constructor(name, value) {
+    constructor(name, value, synthesized = false) {
         this.value = value;
         this.name = name;
         this.used = false;
+        this.synthesized = synthesized;
     }
 
     compareTo(prefix) {
+        if (this.synthesized !== prefix.synthesized)
+            return this.synthesized ? 1 : -1;
         return Resource.compareValues(this.name, prefix.name);
     }
 }
@@ -271,6 +261,77 @@ async function fetchDynamicContents() {
     const cps = await cp.json();
     for (const prefix in cps)
         commonPrefixes.push([prefix, cps[prefix]]);
+}
+
+function uniquePrefixName(store, base) {
+    let name = base;
+    while (true) {
+        let success = true;
+        for (const prefix of store.prefixes) {
+            if (prefix.name === name) {
+                name += "1";
+                success = false;
+                break;
+            }
+        }
+        if (success)
+            return name;
+    }
+}
+
+// For same-origin URIs that no declared/common/base prefix matched, synthesize a
+// prefix for the URI's stem (split at the last '#', or last '/' if there is no
+// '#') so they render as CURIEs instead of full IRIs. The synthesized prefix's
+// value stays absolute (matching the rest of the model); relative display in the
+// rendered `@prefix` line is already handled by URI.createHtml()/relativeReference().
+function addRelativePrefixes(store) {
+    let base;
+    try {
+        base = new URL(store.baseURL);
+    } catch (e) {
+        return;
+    }
+    const stemPrefixes = new Map();
+    for (const key in store.uris) {
+        const uri = store.uris[key];
+        if (uri.prefix !== null)
+            continue;
+        let target;
+        try {
+            target = new URL(uri.value);
+        } catch (e) {
+            continue;
+        }
+        if (target.protocol !== base.protocol || target.host !== base.host)
+            continue;
+        const hashIndex = uri.value.indexOf('#');
+        const stem = hashIndex >= 0
+            ? uri.value.substring(0, hashIndex + 1)
+            : uri.value.substring(0, uri.value.lastIndexOf('/') + 1);
+        const local = uri.value.substring(stem.length);
+        if (stem.length === 0 || stem.length === uri.value.length || !local.match(Resource.LOCAL_NAME_PATTERN))
+            continue;
+        let prefix = stemPrefixes.get(stem);
+        if (!prefix) {
+            const isValidName = s => /^[a-zA-Z][a-zA-Z0-9_\-.]*$/.test(s);
+            const segment = stem.replace(/[#/]+$/, "");
+            const lastSlash = Math.max(segment.lastIndexOf('/'), segment.lastIndexOf('#'));
+            const lastSegment = segment.substring(lastSlash + 1);
+            // A bare numeric/opaque id (e.g. OSM's `way/<id>#id`) fails isValidName on
+            // its own; prefix it with its parent segment (`way` + `320502576`) so
+            // distinct ids get distinct, readable names instead of all colliding on
+            // the same "local" fallback.
+            const parentSegment = segment.substring(0, lastSlash);
+            const combined = parentSegment.substring(Math.max(parentSegment.lastIndexOf('/'), parentSegment.lastIndexOf('#')) + 1) + lastSegment;
+            const candidate = isValidName(lastSegment) ? lastSegment : (isValidName(combined) ? combined : "local");
+            const name = uniquePrefixName(store, candidate);
+            store.addPrefix(name, stem, true);
+            prefix = store.prefixes[store.prefixes.length - 1];
+            stemPrefixes.set(stem, prefix);
+        }
+        uri.prefix = prefix;
+        prefix.used = true;
+    }
 }
 
 function removeUnusedPrefixes(store) {

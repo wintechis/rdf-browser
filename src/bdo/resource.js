@@ -1,3 +1,5 @@
+const LOCAL_NAME_PATTERN = /^[a-zA-Z0-9_][a-zA-Z0-9_\-.]*[a-zA-Z0-9_\-]$|^[a-zA-Z0-9_]$/;
+
 const datatypes = {
     string: "http://www.w3.org/2001/XMLSchema#string",
     integer: "http://www.w3.org/2001/XMLSchema#integer",
@@ -69,7 +71,7 @@ class URI extends Resource {
             return;
         for (const prefix of prefixes) {
             if (this.value.length > prefix.value.value.length && this.value.includes(prefix.value.value) &&
-                this.value.substr(prefix.value.value.length, this.value.length).match(/^[a-zA-Z0-9_][a-zA-Z0-9_\-.]*[a-zA-Z0-9_\-]$|^[a-zA-Z0-9_]$/)) {
+                this.value.substr(prefix.value.value.length, this.value.length).match(LOCAL_NAME_PATTERN)) {
                 this.prefix = prefix;
                 prefix.used = true;
                 return;
@@ -270,4 +272,4 @@ function compareValues(a, b) {
     return a.localeCompare(b);
 }
 
-module.exports = {Resource, URI, BlankNode, Literal, compareValues, relativeReference};
+module.exports = {Resource, URI, BlankNode, Literal, compareValues, relativeReference, LOCAL_NAME_PATTERN};
