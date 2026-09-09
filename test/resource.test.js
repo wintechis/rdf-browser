@@ -44,6 +44,14 @@ test("relativeReference: query and fragment are preserved", () => {
     assert.strictEqual(relativeReference("https://ex.org/a/b?q=1", base), "b?q=1");
 });
 
+test("relativeReference: a bare trailing '#' (empty fragment) is preserved", () => {
+    // URL.hash normalizes an empty fragment to "", losing the distinction
+    // between "no fragment" and "empty fragment" — a stem synthesized for a
+    // hash-fragment IRI (e.g. ".../index#") relies on the '#' staying put.
+    const base = "https://ex.org/tag/building";
+    assert.strictEqual(relativeReference("https://ex.org/index#", base), "../index#");
+});
+
 test("relativeReference: different origin stays absolute (null)", () => {
     const base = "https://ex.org/a/";
     assert.strictEqual(relativeReference("https://other.org/a/", base), null);

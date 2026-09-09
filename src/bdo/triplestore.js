@@ -265,18 +265,10 @@ async function fetchDynamicContents() {
 
 function uniquePrefixName(store, base) {
     let name = base;
-    while (true) {
-        let success = true;
-        for (const prefix of store.prefixes) {
-            if (prefix.name === name) {
-                name += "1";
-                success = false;
-                break;
-            }
-        }
-        if (success)
-            return name;
-    }
+    let suffix = 1;
+    while (store.prefixes.some(prefix => prefix.name === name))
+        name = base + (suffix++);
+    return name;
 }
 
 // For same-origin URIs that no declared/common/base prefix matched, synthesize a
@@ -304,6 +296,11 @@ function addRelativePrefixes(store) {
         }
         if (target.protocol !== base.protocol || target.host !== base.host)
             continue;
+        // The document's own URI is already shown as an empty relative
+        // reference ("<>") by URI.createHtml(); don't also synthesize a
+        // prefix for it, which would render it as an ugly "stem:local" CURIE.
+        if (target.href === base.href)
+            continue;
         const hashIndex = uri.value.indexOf('#');
         const stem = hashIndex >= 0
             ? uri.value.substring(0, hashIndex + 1)
@@ -311,8 +308,7 @@ function addRelativePrefixes(store) {
         const local = uri.value.substring(stem.length);
         if (stem.length === 0 || stem.length === uri.value.length || !local.match(Resource.LOCAL_NAME_PATTERN))
             continue;
-        let prefix = stemPrefixes.get(stem);
-        if (!prefix) {
+        if (!stemPrefixes.has(stem)) {
             const isValidName = s => /^[a-zA-Z][a-zA-Z0-9_\-.]*$/.test(s);
             const segment = stem.replace(/[#/]+$/, "");
             const lastSlash = Math.max(segment.lastIndexOf('/'), segment.lastIndexOf('#'));
@@ -320,15 +316,26 @@ function addRelativePrefixes(store) {
             // A bare numeric/opaque id (e.g. OSM's `way/<id>#id`) fails isValidName on
             // its own; prefix it with its parent segment (`way` + `320502576`) so
             // distinct ids get distinct, readable names instead of all colliding on
-            // the same "local" fallback.
+            // the same fallback name.
             const parentSegment = segment.substring(0, lastSlash);
             const combined = parentSegment.substring(Math.max(parentSegment.lastIndexOf('/'), parentSegment.lastIndexOf('#')) + 1) + lastSegment;
-            const candidate = isValidName(lastSegment) ? lastSegment : (isValidName(combined) ? combined : "local");
+            const candidate = isValidName(lastSegment) ? lastSegment : (isValidName(combined) ? combined : null);
+            // No readable stem name (e.g. a bare opaque/numeric id with no
+            // named parent segment either): these are instance identifiers,
+            // not vocabulary terms, and don't deserve a made-up "local"/
+            // "local1"/"local2"... prefix. Leave them unprefixed — they still
+            // render fine as same-origin relative IRIs.
+            if (candidate === null) {
+                stemPrefixes.set(stem, null);
+                continue;
+            }
             const name = uniquePrefixName(store, candidate);
             store.addPrefix(name, stem, true);
-            prefix = store.prefixes[store.prefixes.length - 1];
-            stemPrefixes.set(stem, prefix);
+            stemPrefixes.set(stem, store.prefixes[store.prefixes.length - 1]);
         }
+        const prefix = stemPrefixes.get(stem);
+        if (prefix === null)
+            continue;
         uri.prefix = prefix;
         prefix.used = true;
     }

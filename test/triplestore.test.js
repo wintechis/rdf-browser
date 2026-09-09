@@ -68,6 +68,36 @@ test("finalize: does not synthesize a prefix for a cross-origin IRI", () => {
     assert.strictEqual(o.prefix, null);
 });
 
+test("finalize: does not synthesize a prefix for the document's own URI", () => {
+    const store = new ts.Triplestore("https://osmwrap.ontologycentral.com/tag/building", []);
+    const s = store.getURI("https://osmwrap.ontologycentral.com/tag/building");
+    const p = store.getURI("https://example.org/predicate");
+    const o = store.getURI("https://osmwrap.ontologycentral.com/tag/other");
+    store.addTriple(s, p, o);
+    store.finalize();
+
+    assert.strictEqual(s.prefix, null);
+    assert.strictEqual(o.prefix.name, "tag");
+});
+
+test("finalize: leaves opaque same-origin ids with no readable stem name unprefixed", () => {
+    const store = new ts.Triplestore("https://ex.org/", []);
+    const p = store.getURI("https://example.org/predicate");
+    // Neither the id segment nor its parent segment is a valid prefix name,
+    // so these shouldn't get a made-up "local"/"local1"/"local2"... prefix.
+    const objects = ["1", "2", "3", "4"].map(n => {
+        const o = store.getURI(`https://ex.org/${n}/${n}#concept`);
+        store.addTriple(store.getURI("https://ex.org/s"), p, o);
+        return o;
+    });
+    store.finalize();
+
+    for (const o of objects)
+        assert.strictEqual(o.prefix, null);
+    const names = store.prefixes.filter(pr => pr.synthesized && pr.used && pr.name !== "").map(pr => pr.name);
+    assert.deepStrictEqual(names, []);
+});
+
 test("addTriple: de-duplicates identical triples", () => {
     const store = new ts.Triplestore("https://ex.org/", []);
     const triple = () => store.addTriple(

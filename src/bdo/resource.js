@@ -253,7 +253,12 @@ function relativeReference(targetHref, baseHref) {
         rel = "./"; // target is the base directory itself
     else if (up === 0 && /^[^/]*:/.test(rel))
         rel = "./" + rel; // first segment with ':' would be read as a scheme
-    return rel + t.search + t.hash;
+    // t.hash normalizes a bare trailing "#" (empty fragment) to "", losing it —
+    // but t.href keeps it, and stems synthesized for hash-fragment IRIs rely on
+    // that trailing "#" being present. Recover it from href instead of t.hash.
+    const hashIndex = t.href.indexOf("#");
+    const hash = hashIndex >= 0 ? t.href.substring(hashIndex) : "";
+    return rel + t.search + hash;
 }
 
 function compareValues(a, b) {
