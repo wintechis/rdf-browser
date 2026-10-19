@@ -1,0 +1,37 @@
+diff --git a/node_modules/jsonld-streaming-parser/lib/containerhandler/ContainerHandlerIndex.js b/node_modules/jsonld-streaming-parser/lib/containerhandler/ContainerHandlerIndex.js
+index ee73786..84047f7 100755
+--- a/node_modules/jsonld-streaming-parser/lib/containerhandler/ContainerHandlerIndex.js
++++ b/node_modules/jsonld-streaming-parser/lib/containerhandler/ContainerHandlerIndex.js
+@@ -54,10 +54,31 @@ class ContainerHandlerIndex {
+                         }
+                     }
+                     else {
+-                        // Otherwise, attach the index to the node identifier
++                        const isNode = typeof value === 'object';
++                        if (isNode) {
++                            // Handle the node first, so that a node without @id gets its (blank node) identifier,
++                            // and attach the index to that same identifier afterwards (analogous to @type containers).
++                            const entryHasIdentifier = Boolean(parsingContext.idStack[depth + 1]);
++                            if (!entryHasIdentifier) {
++                                // Force new (blank node) identifier
++                                delete parsingContext.idStack[depth];
++                            }
++                            await parsingContext.newOnValueJob(keys.slice(0, -1), value, depth - 1, true);
++                            if (!entryHasIdentifier) {
++                                // Copy the id to the child node, so the index value is attached to it
++                                parsingContext.idStack[depth + 1] = parsingContext.idStack[depth];
++                            }
++                        }
++                        // Attach the index to the node identifier
+                         for (const indexValue of indexValues) {
+                             await EntryHandlerPredicate_1.EntryHandlerPredicate.handlePredicateObject(parsingContext, util, keys, depth + 1, indexProperty, indexValue, false, false, false);
+                         }
++                        if (isNode) {
++                            // Flush any pending flush buffers
++                            await parsingContext.handlePendingContainerFlushBuffers();
++                            parsingContext.emittedStack[depth] = false;
++                            return;
++                        }
+                     }
+                 }
+             }

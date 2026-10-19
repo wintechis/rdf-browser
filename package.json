@@ -7,7 +7,8 @@
     "test": "node --test",
     "build": "./script/build.sh",
     "browserify": "esbuild src/main.js --bundle --minify --outfile=build/main.js --global-name=app --platform=browser --alias:stream=stream-browserify --alias:buffer=buffer --alias:events=events --alias:util=util --alias:assert=assert --inject:src/process-inject.js",
-    "release": "./script/release.sh"
+    "release": "./script/release.sh",
+    "postinstall": "patch-package"
   },
   "repository": {
     "type": "git",
@@ -15,7 +16,7 @@
   },
   "dependencies": {
     "@inrupt/solid-client-authn-browser": "^5.0.0",
-    "jsonld-streaming-parser": "^5.0.1",
+    "jsonld-streaming-parser": "^5.0.2",
     "jsonld-streaming-serializer": "^4.0.0",
     "n3": "^2.0.3",
     "rdfxml-streaming-parser": "^3.2.0"
@@ -25,6 +26,7 @@
     "buffer": "^6.0.3",
     "esbuild": "^0.28.0",
     "events": "^3.3.0",
+    "patch-package": "^8.0.1",
     "process": "^0.11.10",
     "stream-browserify": "^3.0.0",
     "util": "^0.12.5"
