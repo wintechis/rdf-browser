@@ -12,12 +12,14 @@ const defaultOptions = {
     trig: true,
     ttl: true,
     n3: true,
+    shex: true,
     xhr: true,
     rdfext: false,
     jsonldext: false,
     ttlext: false,
     ntext: false,
     nqext: false,
+    shexext: true,
     maxsize: 10485760,
     allStyleTemplate: {
         none: {

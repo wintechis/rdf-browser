@@ -1,6 +1,7 @@
 const browser = window.browser;
 const parser = require("./parser");
 const serializer = require("./serializer");
+const shex = require("./shex");
 const utils = require('./utils');
 const auth = require('./auth');
 const pagestyle = require('./pagestyle');
@@ -11,6 +12,7 @@ const filter = {
     urls: ["<all_urls>"]
 };
 const requests = {};
+const SHEX = "text/shex";
 let options;
 
 function getFormats(uri = "") {
@@ -32,6 +34,18 @@ function getFormats(uri = "") {
     return formats;
 }
 
+/**
+ * The content types rendered from a response: the RDF formats plus ShExC.
+ * ShExC is kept out of getFormats() so it is not advertised in the Accept
+ * header, where it could outrank RDF on servers that negotiate both.
+ */
+function getRenderedFormats() {
+    const formats = getFormats();
+    if (options.shex)
+        formats.push(SHEX);
+    return formats;
+}
+
 function getFileTypes() {
     const fileTypes = [];
     if (options.rdfext)
@@ -44,6 +58,8 @@ function getFileTypes() {
         fileTypes.push("nt");
     if (options.nqext)
         fileTypes.push("nq");
+    if (options.shexext)
+        fileTypes.push("shex");
     return fileTypes;
 }
 
@@ -57,6 +73,8 @@ function getFormatFor(fileType) {
         case "nt":
         case "nq":
             return "text/turtle";
+        case "shex":
+            return SHEX;
         default:
             return false;
     }
@@ -125,7 +143,7 @@ async function modifyResponseHeader(details) {
     }
     const onWhitelist = utils.onList(options, "whitelist", new URL(details.url));
     const contentType = details.responseHeaders.find(h => h.name.toLowerCase() === "content-type");
-    let format = contentType ? getFormats().find(f => contentType.value.includes(f)) : false;
+    let format = contentType ? getRenderedFormats().find(f => contentType.value.includes(f)) : false;
     let fileType = new URL(details.url).pathname.split(".");
     fileType = (fileType !== undefined && fileType.length >= 1) ? fileType[fileType.length - 1] : false;
     let encoding = contentType ? contentType.value.split("charset=") : false;
@@ -177,7 +195,7 @@ async function renderAuthenticatedResource(cl, details, encoding, format) {
     // Prefer the real resource's own content-type now that we have it; the
     // format/encoding guessed from the 401 challenge may not match the resource.
     const contentType = response.headers.get("Content-Type") || "";
-    const resolvedFormat = getFormats().find(f => contentType.includes(f)) || format;
+    const resolvedFormat = getRenderedFormats().find(f => contentType.includes(f)) || format;
     const charset = contentType.split("charset=")[1];
     return await rewriteResponse(cl, details, charset || encoding, resolvedFormat, false, response);
 }
@@ -342,7 +360,8 @@ async function rewriteResponse(cl, details, encoding, format, redirect, prefetch
         .catch(e => {
             // Malformed RDF (or an unsupported encoding): show the shared error
             // page instead of a blank document.
-            const html = buildErrorPage(baseIRI, 0, "Could not parse the RDF document", (e && e.message) ? e.message : String(e));
+            const what = format === SHEX ? "Could not parse the ShEx schema" : "Could not parse the RDF document";
+            const html = buildErrorPage(baseIRI, 0, what, (e && e.message) ? e.message : String(e));
             filter.write(encoder.encode(html));
             filter.close();
         });
@@ -384,10 +403,20 @@ function getNewAcceptHeader(oldHeader, uri = "") {
  * @returns The HTML payload as string (in background script mode only)
  */
 async function processRDFPayload(stream, redirect, decoder, format, baseIRI) {
-    const triplestore = await parser.obtainTriplestore(stream, redirect, decoder, format, baseIRI);
+    let render;
+    if (format === SHEX) {
+        const schema = shex.parseSchema(await shex.readText(stream, redirect, decoder), baseIRI);
+        render = document => renderShapeView(document, schema);
+    } else {
+        const store = await parser.obtainTriplestore(stream, redirect, decoder, format, baseIRI);
+        render = document => {
+            document.getElementById("prefixes").appendChild(serializer.serializePrefixes(store));
+            document.getElementById("triples").appendChild(serializer.serializeTriples(store));
+        };
+    }
     let template = await getTemplate();
     template = await utils.injectScript(template, styleScriptPath);
-    return createDocument(template, triplestore);
+    return createDocument(template, render);
 
     function getTemplate() {
         return new Promise(resolve => {
@@ -401,7 +430,18 @@ async function processRDFPayload(stream, redirect, decoder, format, baseIRI) {
         });
     }
 
-    function createDocument(html, store) {
+    // The ShExC shape view: shapes as Predicate | Value | Cardinality tables in
+    // the same template (and theme) as the Turtle view.
+    function renderShapeView(document, schema) {
+        const view = shex.renderSchema(schema, baseIRI);
+        const style = document.createElement("style");
+        style.textContent = shex.SHAPE_CSS;
+        document.head.appendChild(style);
+        document.getElementById("prefixes").innerHTML = view.prefixes;
+        document.getElementById("triples").innerHTML = view.shapes;
+    }
+
+    function createDocument(html, render) {
         const document = new DOMParser().parseFromString(html, "text/html");
         document.getElementById("title").innerText = baseIRI;
         document.getElementById("content-script").remove();
@@ -412,8 +452,7 @@ async function processRDFPayload(stream, redirect, decoder, format, baseIRI) {
         const scriptString = JSON.stringify(options.allStyleTemplate[options.allStyleTemplate.selected]);
         const script = "\nconst style = " + scriptString + ";\n";
         scriptElement.insertBefore(document.createTextNode(script), scriptElement.firstChild);
-        document.getElementById("prefixes").appendChild(serializer.serializePrefixes(store));
-        document.getElementById("triples").appendChild(serializer.serializeTriples(store));
+        render(document);
         return new XMLSerializer().serializeToString(document);
     }
 }

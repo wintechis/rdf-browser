@@ -50,6 +50,7 @@ $ npm run build
 ## Changelog
 
 ### Version 2.0.0
+- Added rendering of ShEx schemas in compact syntax (ShExC, `text/shex` or `.shex`) as ShExC with clickable IRIs; shape references jump to the shape's declaration within the page.
 - Fixed several ugly/incorrect synthesized-prefix CURIEs: the document's own URI is no longer prefixed (stays `<>`), repeated prefix-name collisions are numbered instead of stacking `1`s, same-origin ids with no readable name are left unprefixed rather than getting a made-up `local` prefix, and a synthesized prefix ending in a bare `#` no longer loses it when rendered relative to the base.
 - Added Solid-OIDC authentication: protected pod resources prompt a login and are then rendered via an authenticated, DPoP-signed request. The session is held in the background page so navigating between protected resources does not re-authenticate.
 - Protected resources render read-only in place at their real URL, like public resources.
