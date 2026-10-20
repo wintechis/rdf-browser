@@ -13,6 +13,8 @@ const filter = {
 };
 const requests = {};
 const SHEX = "text/shex";
+const TD = "application/td+json";
+const TM = "application/tm+json";
 let options;
 
 function getFormats(uri = "") {
@@ -35,12 +37,15 @@ function getFormats(uri = "") {
 }
 
 /**
- * The content types rendered from a response: the RDF formats plus ShExC.
- * ShExC is kept out of getFormats() so it is not advertised in the Accept
- * header, where it could outrank RDF on servers that negotiate both.
+ * The content types rendered from a response: the RDF formats plus ShExC and
+ * the JSON-LD based WoT Thing Description/Thing Model types. These are kept out
+ * of getFormats() so they are not advertised in the Accept header, where they
+ * could outrank RDF on servers that negotiate both.
  */
 function getRenderedFormats() {
     const formats = getFormats();
+    if (options.json)
+        formats.push(TD, TM);
     if (options.shex)
         formats.push(SHEX);
     return formats;

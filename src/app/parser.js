@@ -24,6 +24,8 @@ function getParser(format, baseIRI) {
             });
             break;
         case "application/ld+json":
+        case "application/td+json":
+        case "application/tm+json":
             parser = new JsonLdParser({
                 baseIRI: baseIRI
             });
