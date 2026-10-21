@@ -2,6 +2,7 @@ const browser = window.browser;
 const parser = require("./parser");
 const serializer = require("./serializer");
 const shex = require("./shex");
+const sparql = require("./sparql");
 const utils = require('./utils');
 const auth = require('./auth');
 const pagestyle = require('./pagestyle');
@@ -13,6 +14,8 @@ const filter = {
 };
 const requests = {};
 const SHEX = "text/shex";
+const SPARQL_QUERY = "application/sparql-query";
+const SPARQL_UPDATE = "application/sparql-update";
 const TD = "application/td+json";
 const TM = "application/tm+json";
 let options;
@@ -37,8 +40,8 @@ function getFormats(uri = "") {
 }
 
 /**
- * The content types rendered from a response: the RDF formats plus ShExC and
- * the JSON-LD based WoT Thing Description/Thing Model types. These are kept out
+ * The content types rendered from a response: the RDF formats plus ShExC,
+ * SPARQL and the JSON-LD based WoT Thing Description/Thing Model types. These are kept out
  * of getFormats() so they are not advertised in the Accept header, where they
  * could outrank RDF on servers that negotiate both.
  */
@@ -48,6 +51,8 @@ function getRenderedFormats() {
         formats.push(TD, TM);
     if (options.shex)
         formats.push(SHEX);
+    if (options.sparql)
+        formats.push(SPARQL_QUERY, SPARQL_UPDATE);
     return formats;
 }
 
@@ -65,6 +70,8 @@ function getFileTypes() {
         fileTypes.push("nq");
     if (options.shexext)
         fileTypes.push("shex");
+    if (options.sparqlext)
+        fileTypes.push("rq", "ru");
     return fileTypes;
 }
 
@@ -80,6 +87,10 @@ function getFormatFor(fileType) {
             return "text/turtle";
         case "shex":
             return SHEX;
+        case "rq":
+            return SPARQL_QUERY;
+        case "ru":
+            return SPARQL_UPDATE;
         default:
             return false;
     }
@@ -412,6 +423,14 @@ async function processRDFPayload(stream, redirect, decoder, format, baseIRI) {
     if (format === SHEX) {
         const schema = shex.parseSchema(await shex.readText(stream, redirect, decoder), baseIRI);
         render = document => renderShapeView(document, schema);
+    } else if (format === SPARQL_QUERY || format === SPARQL_UPDATE) {
+        const query = sparql.renderQuery(await shex.readText(stream, redirect, decoder), baseIRI);
+        render = document => {
+            const style = document.createElement("style");
+            style.textContent = sparql.QUERY_CSS;
+            document.head.appendChild(style);
+            document.getElementById("triples").innerHTML = query;
+        };
     } else {
         const store = await parser.obtainTriplestore(stream, redirect, decoder, format, baseIRI);
         render = document => {

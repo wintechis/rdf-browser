@@ -13,6 +13,7 @@ const defaultOptions = {
     ttl: true,
     n3: true,
     shex: true,
+    sparql: true,
     xhr: true,
     rdfext: false,
     jsonldext: false,
@@ -20,6 +21,7 @@ const defaultOptions = {
     ntext: false,
     nqext: false,
     shexext: true,
+    sparqlext: true,
     maxsize: 10485760,
     allStyleTemplate: {
         none: {
